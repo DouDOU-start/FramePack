@@ -14,6 +14,5 @@ einops
 opencv-contrib-python
 safetensors
 
-# 透明背景处理相关
-imageio
-imageio-ffmpeg  # 备选FFMPEG实现
+kornia
+timm
