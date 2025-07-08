@@ -30,7 +30,7 @@ def get_video_framerate(video_path: str) -> str:
         print(f"警告: 使用 ffprobe 获取帧率失败: {e}。将默认使用 30fps。")
         return "30"
 
-def process_video(video_path, output_dir, model_path, device, keep_frames):
+def process_video(video_path, output_dir, model_path, device, keep_frames, output_format="webm"):
     """
     处理视频：提取帧、移除背景、保存处理后的帧，并最终合成为具有透明背景的视频。
     """
@@ -115,8 +115,8 @@ def process_video(video_path, output_dir, model_path, device, keep_frames):
             print(f"处理帧 '{frame_file}' 时出错: {e}")
 
     # --- 5. Synthesize Transparent Video ---
-    print("\n开始合成具有透明背景的 WebM 视频...")
-    output_video_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_transparent.webm"
+    print(f"\n开始合成具有透明背景的 {output_format.upper()} 视频...")
+    output_video_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_transparent.{output_format}"
     output_video_path = os.path.join(output_dir, output_video_filename)
     input_frames_pattern = os.path.join(output_dir, "frame_%06d.png")
 
@@ -125,14 +125,29 @@ def process_video(video_path, output_dir, model_path, device, keep_frames):
             ffmpeg_path,
             "-framerate", framerate,
             "-i", input_frames_pattern,
-            "-c:v", "libvpx-vp9",
-            "-pix_fmt", "yuva420p",
-            "-b:v", "0",
-            "-crf", "30",
-            "-auto-alt-ref", "0",
+        ]
+
+        if output_format == 'webm':
+            command.extend([
+                "-c:v", "libvpx-vp9",
+                "-pix_fmt", "yuva420p",
+                "-b:v", "0",
+                "-crf", "30",
+                "-auto-alt-ref", "0",
+            ])
+        elif output_format == 'mov':
+            # 使用 ProRes 编码器，支持 alpha 通道
+            command.extend([
+                "-c:v", "prores_ks",
+                "-pix_fmt", "yuva444p10le",
+                "-profile:v", "4444", 
+                "-qscale:v", "9" # qscale 范围 1-31, 数字越小质量越高
+            ])
+
+        command.extend([
             "-y",
             output_video_path,
-        ]
+        ])
         print(f"运行 FFmpeg 命令: {' '.join(command)}")
         subprocess.run(command, check=True, capture_output=True, text=True)
         print(f"成功创建透明视频: {output_video_path}")
@@ -156,9 +171,10 @@ def process_video(video_path, output_dir, model_path, device, keep_frames):
 '''
 使用示例：
 python process_video.py --input "../inputs/华佗.mp4" --output "../outputs/华佗" --model-path "../hf_download/RMBG-2.0" --gpu 0 --keep-frames
+python process_video.py --input "../inputs/华佗.mp4" --output "../outputs/华佗" --model-path "../hf_download/RMBG-2.0" --gpu 0 --output-format mov
 '''
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="使用 RMBG-2.0 对视频进行逐帧抠图，并合成为透明背景的 WebM 视频。")
+    parser = argparse.ArgumentParser(description="使用 RMBG-2.0 对视频进行逐帧抠图，并合成为透明背景的视频。")
     parser.add_argument("--input", type=str, required=True, help="输入视频文件的路径。")
     parser.add_argument("--output", type=str, required=True, help="保存输出视频和（可选的）处理后PNG帧的目录。")
     parser.add_argument("--model-path", type=str, default="../hf_download/RMBG-2.0", help="RMBG-2.0 模型所在的路径。")
@@ -167,6 +183,13 @@ if __name__ == "__main__":
         "--keep-frames",
         action="store_true", # 当出现这个参数时，其值为 True
         help="如果设置此项，将在视频合成后保留所有处理过的PNG帧。默认不保留。"
+    )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=['webm', 'mov'],
+        default='webm',
+        help="输出视频的格式。可选 'webm' 或 'mov'。默认为 'webm'。"
     )
 
     args = parser.parse_args()
@@ -182,4 +205,4 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("将使用 CPU。")
     
-    process_video(args.input, args.output, args.model_path, device, args.keep_frames)
+    process_video(args.input, args.output, args.model_path, device, args.keep_frames, args.output_format)
