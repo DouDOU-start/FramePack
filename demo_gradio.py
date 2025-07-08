@@ -17,7 +17,7 @@ from PIL import Image
 from diffusers import AutoencoderKLHunyuanVideo
 from transformers import LlamaModel, CLIPTextModel, LlamaTokenizerFast, CLIPTokenizer
 from diffusers_helper.hunyuan import encode_prompt_conds, vae_decode, vae_encode, vae_decode_fake
-from diffusers_helper.utils import save_bcthw_as_mp4, save_bcthw_as_webm, crop_or_pad_yield_mask, soft_append_bcthw, resize_and_center_crop, state_dict_weighted_merge, state_dict_offset_merge, generate_timestamp
+from diffusers_helper.utils import save_bcthw_as_mp4, crop_or_pad_yield_mask, soft_append_bcthw, resize_and_center_crop, state_dict_weighted_merge, state_dict_offset_merge, generate_timestamp
 from diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModelPacked
 from diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
 from diffusers_helper.memory import cpu, gpu, get_cuda_free_memory_gb, move_model_to_device_with_memory_preservation, offload_model_from_device_for_memory_preservation, fake_diffusers_current_device, DynamicSwapInstaller, unload_complete_models, load_model_as_complete
@@ -100,7 +100,7 @@ os.makedirs(outputs_folder, exist_ok=True)
 
 
 @torch.no_grad()
-def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, transparent_bg, output_format):
+def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
     total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
     total_latent_sections = int(max(round(total_latent_sections), 1))
 
@@ -138,41 +138,13 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
         stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Image processing ...'))))
 
         H, W, C = input_image.shape
-        has_alpha = C == 4 and transparent_bg
-        
-        # 打印图像信息以便调试
-        print(f"输入图像形状: {input_image.shape}, 通道数: {C}, 透明背景选项: {transparent_bg}")
-        if has_alpha:
-            # 检查Alpha通道是否有非255值（透明像素）
-            alpha_channel = input_image[:, :, 3]
-            transparent_pixels = np.sum(alpha_channel < 255)
-            print(f"图像有Alpha通道，透明像素数量: {transparent_pixels}")
-            if transparent_pixels == 0:
-                print("警告：图像虽有Alpha通道但没有透明像素，可能是全不透明的图像")
-        
         height, width = find_nearest_bucket(H, W, resolution=640)
         input_image_np = resize_and_center_crop(input_image, target_width=width, target_height=height)
-        
-        # 再次检查处理后的图像
-        if has_alpha:
-            print(f"处理后图像形状: {input_image_np.shape}")
-            alpha_channel = input_image_np[:, :, 3]
-            transparent_pixels = np.sum(alpha_channel < 255)
-            print(f"处理后图像透明像素数量: {transparent_pixels}")
 
-        if has_alpha:
-            # 保存带Alpha通道的图像
-            Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'))
-            
-            # 转换为PyTorch张量，保留Alpha通道
-            input_image_pt = torch.from_numpy(input_image_np).float() / 127.5 - 1
-            input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
-            print(f"转换为张量后形状: {input_image_pt.shape}")
-        else:
-            # 原始的RGB处理
-            Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'))
-            input_image_pt = torch.from_numpy(input_image_np).float() / 127.5 - 1
-            input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
+        Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'))
+
+        input_image_pt = torch.from_numpy(input_image_np).float() / 127.5 - 1
+        input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
 
         # VAE encoding
 
@@ -181,7 +153,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
         if not high_vram:
             load_model_as_complete(vae, target_device=gpu)
 
-        start_latent = vae_encode(input_image_pt, vae, with_alpha=has_alpha)
+        start_latent = vae_encode(input_image_pt, vae)
 
         # CLIP Vision
 
@@ -190,7 +162,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
         if not high_vram:
             load_model_as_complete(image_encoder, target_device=gpu)
 
-        image_encoder_output = hf_clip_vision_encode(input_image_np[:,:,:3] if has_alpha else input_image_np, feature_extractor, image_encoder)
+        image_encoder_output = hf_clip_vision_encode(input_image_np, feature_extractor, image_encoder)
         image_encoder_last_hidden_state = image_encoder_output.last_hidden_state
 
         # Dtype
@@ -250,10 +222,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
 
             def callback(d):
                 preview = d['denoised']
-                # 传递Alpha通道信息
-                if transparent_bg and hasattr(vae, '_alpha_channel'):
-                    preview._alpha_channel = vae._alpha_channel
-                preview = vae_decode_fake(preview, with_alpha=transparent_bg)
+                preview = vae_decode_fake(preview)
 
                 preview = (preview * 255.0).detach().cpu().numpy().clip(0, 255).astype(np.uint8)
                 preview = einops.rearrange(preview, 'b c t h w -> (b h) (t w) c')
@@ -313,28 +282,20 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
             real_history_latents = history_latents[:, :, :total_generated_latent_frames, :, :]
 
             if history_pixels is None:
-                history_pixels = vae_decode(real_history_latents, vae, with_alpha=transparent_bg).cpu()
+                history_pixels = vae_decode(real_history_latents, vae).cpu()
             else:
                 section_latent_frames = (latent_window_size * 2 + 1) if is_last_section else (latent_window_size * 2)
                 overlapped_frames = latent_window_size * 4 - 3
 
-                current_pixels = vae_decode(real_history_latents[:, :, :section_latent_frames], vae, with_alpha=transparent_bg).cpu()
+                current_pixels = vae_decode(real_history_latents[:, :, :section_latent_frames], vae).cpu()
                 history_pixels = soft_append_bcthw(current_pixels, history_pixels, overlapped_frames)
 
             if not high_vram:
                 unload_complete_models()
 
-            # 根据选择的输出格式保存视频
-            if output_format == 'webm':
-                output_filename = os.path.join(outputs_folder, f'{job_id}_{total_generated_latent_frames}.webm')
-                save_bcthw_as_webm(history_pixels, output_filename, fps=30, quality=1.0 - mp4_crf/100.0)
-            else:
-                output_filename = os.path.join(outputs_folder, f'{job_id}_{total_generated_latent_frames}.mp4')
-                # 如果有透明通道但输出为mp4，只使用RGB通道
-                if transparent_bg and history_pixels.shape[1] == 4:
-                    save_bcthw_as_mp4(history_pixels[:, :3], output_filename, fps=30, crf=mp4_crf)
-                else:
-                    save_bcthw_as_mp4(history_pixels, output_filename, fps=30, crf=mp4_crf)
+            output_filename = os.path.join(outputs_folder, f'{job_id}_{total_generated_latent_frames}.mp4')
+
+            save_bcthw_as_mp4(history_pixels, output_filename, fps=30, crf=mp4_crf)
 
             print(f'Decoded. Current latent shape {real_history_latents.shape}; pixel shape {history_pixels.shape}')
 
@@ -354,7 +315,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
     return
 
 
-def process(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, transparent_bg, output_format):
+def process(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
     global stream
     assert input_image is not None, 'No input image!'
 
@@ -362,7 +323,7 @@ def process(input_image, prompt, n_prompt, seed, total_second_length, latent_win
 
     stream = AsyncStream()
 
-    async_run(worker, input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, transparent_bg, output_format)
+    async_run(worker, input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf)
 
     output_filename = None
 
@@ -399,7 +360,7 @@ with block:
     gr.Markdown('# FramePack')
     with gr.Row():
         with gr.Column():
-            input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320, image_mode='RGBA')
+            input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
             prompt = gr.Textbox(label="Prompt", value='')
             example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
             example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
@@ -426,10 +387,6 @@ with block:
 
                 mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=16, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
 
-                transparent_bg = gr.Checkbox(label='启用透明背景', value=True, info='如果输入图像有透明通道，勾选此项将保留透明效果。需要选择webm输出格式。')
-
-                output_format = gr.Radio(label='输出格式', choices=['mp4', 'webm'], value='webm', info='选择webm格式以支持透明背景。需要安装ffmpeg。')
-
         with gr.Column():
             preview_image = gr.Image(label="Next Latents", height=200, visible=False)
             result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
@@ -439,7 +396,7 @@ with block:
 
     gr.HTML('<div style="text-align:center; margin-top:20px;">Share your results and find ideas at the <a href="https://x.com/search?q=framepack&f=live" target="_blank">FramePack Twitter (X) thread</a></div>')
 
-    ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, transparent_bg, output_format]
+    ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf]
     start_button.click(fn=process, inputs=ips, outputs=[result_video, preview_image, progress_desc, progress_bar, start_button, end_button])
     end_button.click(fn=end_process)
 

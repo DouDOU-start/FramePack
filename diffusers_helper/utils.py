@@ -43,64 +43,21 @@ def d_resize(x, y):
 
 
 def resize_and_center_crop(image, target_width, target_height):
-    # 检查是否有Alpha通道
-    has_alpha = image.shape[2] == 4
-    
-    if has_alpha:
-        # 分离RGB和Alpha通道
-        rgb = image[:, :, :3]
-        alpha = image[:, :, 3]  # 注意：这里不保留额外的维度
-        
-        # 处理RGB部分
-        h, w = rgb.shape[:2]
-        
-        # 计算调整大小后的尺寸
-        if h * target_width > w * target_height:  # 如果原始图像更高
-            new_h = int(target_height * w / target_width)
-            new_w = w
-            top = (h - new_h) // 2
-            left = 0
-        else:  # 如果原始图像更宽
-            new_h = h
-            new_w = int(target_width * h / target_height)
-            top = 0
-            left = (w - new_w) // 2
-        
-        # 裁剪
-        rgb_cropped = rgb[top:top + new_h, left:left + new_w]
-        alpha_cropped = alpha[top:top + new_h, left:left + new_w]
-        
-        # 调整大小
-        rgb_resized = cv2.resize(rgb_cropped, (target_width, target_height), interpolation=cv2.INTER_LANCZOS4)
-        alpha_resized = cv2.resize(alpha_cropped, (target_width, target_height), interpolation=cv2.INTER_LANCZOS4)
-        
-        # 确保alpha_resized是3D数组，最后一维为1
-        alpha_resized = alpha_resized[:, :, np.newaxis]
-        
-        # 合并通道
-        result = np.concatenate([rgb_resized, alpha_resized], axis=2)
-        return result
-    else:
-        # 原始的RGB处理逻辑
-        h, w = image.shape[:2]
-        
-        # 计算调整大小后的尺寸
-        if h * target_width > w * target_height:  # 如果原始图像更高
-            new_h = int(target_height * w / target_width)
-            new_w = w
-            top = (h - new_h) // 2
-            left = 0
-        else:  # 如果原始图像更宽
-            new_h = h
-            new_w = int(target_width * h / target_height)
-            top = 0
-            left = (w - new_w) // 2
-        
-        # 裁剪并调整大小
-        cropped = image[top:top + new_h, left:left + new_w]
-        resized = cv2.resize(cropped, (target_width, target_height), interpolation=cv2.INTER_LANCZOS4)
-        
-        return resized
+    if target_height == image.shape[0] and target_width == image.shape[1]:
+        return image
+
+    pil_image = Image.fromarray(image)
+    original_width, original_height = pil_image.size
+    scale_factor = max(target_width / original_width, target_height / original_height)
+    resized_width = int(round(original_width * scale_factor))
+    resized_height = int(round(original_height * scale_factor))
+    resized_image = pil_image.resize((resized_width, resized_height), Image.LANCZOS)
+    left = (resized_width - target_width) / 2
+    top = (resized_height - target_height) / 2
+    right = (resized_width + target_width) / 2
+    bottom = (resized_height + target_height) / 2
+    cropped_image = resized_image.crop((left, top, right, bottom))
+    return np.array(cropped_image)
 
 
 def resize_and_center_crop_pytorch(image, target_width, target_height):
@@ -293,36 +250,13 @@ def uniform_random_by_intervals(inclusive, exclusive, n, round_to_int=False):
 
 
 def soft_append_bcthw(history, current, overlap=0):
-    """
-    将当前帧与历史帧软连接，处理重叠区域
-    
-    history: [b, c, t, h, w] 历史帧
-    current: [b, c, t, h, w] 当前帧
-    overlap: 重叠帧数
-    """
     if overlap <= 0:
         return torch.cat([history, current], dim=2)
-    
+
     assert history.shape[2] >= overlap, f"History length ({history.shape[2]}) must be >= overlap ({overlap})"
     assert current.shape[2] >= overlap, f"Current length ({current.shape[2]}) must be >= overlap ({overlap})"
     
-    # 确保通道数匹配
-    if current.shape[1] != history.shape[1]:
-        # 如果通道数不同，可能是一个有Alpha通道而另一个没有
-        # 在这种情况下，我们需要为没有Alpha通道的张量添加一个
-        if current.shape[1] == 3 and history.shape[1] == 4:
-            b, c, t, h, w = current.shape
-            alpha_channel = torch.ones((b, 1, t, h, w), device=current.device, dtype=current.dtype)
-            current = torch.cat([current, alpha_channel], dim=1)
-        elif current.shape[1] == 4 and history.shape[1] == 3:
-            b, c, t, h, w = history.shape
-            alpha_channel = torch.ones((b, 1, t, h, w), device=history.device, dtype=history.dtype)
-            history = torch.cat([history, alpha_channel], dim=1)
-    
-    # 创建线性权重用于混合
     weights = torch.linspace(1, 0, overlap, dtype=history.dtype, device=history.device).view(1, 1, -1, 1, 1)
-    
-    # 混合重叠区域
     blended = weights * history[:, :, -overlap:] + (1 - weights) * current[:, :, :overlap]
     output = torch.cat([history[:, :, :-overlap], blended, current[:, :, overlap:]], dim=2)
 
@@ -677,143 +611,3 @@ def move_optimizer_to_device(optimizer, device):
         for k, v in state.items():
             if isinstance(v, torch.Tensor):
                 state[k] = v.to(device)
-
-
-def save_bcthw_as_webm(x, output_filename, fps=10, quality=1.0):
-    """
-    将带有透明通道的视频保存为webm格式
-    x: 形状为 [batch, channels, time, height, width] 的张量，channels可以是3(RGB)或4(RGBA)
-    """
-    import subprocess
-    import tempfile
-    import os
-    import sys
-    import shutil
-    from PIL import Image
-    
-    # 检查ffmpeg是否可用
-    ffmpeg_path = shutil.which("ffmpeg")
-    if ffmpeg_path is None:
-        print("警告: ffmpeg未找到，无法生成webm格式视频。将保存为MP4格式。")
-        mp4_filename = output_filename.replace(".webm", ".mp4")
-        save_bcthw_as_mp4(x[:, :3] if x.shape[1] == 4 else x, mp4_filename, fps=fps, crf=int((1.0 - quality) * 51))
-        return x
-    
-    b, c, t, h, w = x.shape
-    
-    # 如果输入是RGB，添加Alpha通道
-    if c == 3:
-        print("警告: 输入是RGB格式，没有透明通道。将创建全不透明的Alpha通道。")
-        alpha_channel = torch.ones((b, 1, t, h, w), device=x.device, dtype=x.dtype)
-        x = torch.cat([x, alpha_channel], dim=1)
-        c = 4
-    
-    assert c == 4, "输入张量必须有3或4个通道 (RGB或RGBA)"
-    
-    # 打印Alpha通道信息
-    alpha = x[:, 3:4]
-    min_alpha = alpha.min().item()
-    max_alpha = alpha.max().item()
-    mean_alpha = alpha.mean().item()
-    print(f"Alpha通道信息: 最小值={min_alpha}, 最大值={max_alpha}, 平均值={mean_alpha}")
-    
-    # 如果Alpha通道全是1，可能是没有正确处理透明度
-    if min_alpha == 1.0 and max_alpha == 1.0:
-        print("警告: Alpha通道全是1，没有透明像素。可能需要检查透明度处理流程。")
-    
-    # 创建临时目录存储帧
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # 将张量转换为图像并保存为PNG序列
-        x = torch.clamp(x.float(), -1., 1.) * 127.5 + 127.5
-        x = x.detach().cpu().to(torch.uint8).numpy()
-        
-        # 确保输出目录存在
-        os.makedirs(os.path.dirname(os.path.abspath(os.path.realpath(output_filename))), exist_ok=True)
-        
-        # 保存每一帧为PNG
-        for i in range(t):
-            frame = x[:, :, i]  # [b, c, h, w]
-            
-            # 处理批次维度
-            per_row = b
-            for p in [6, 5, 4, 3, 2]:
-                if b % p == 0:
-                    per_row = p
-                    break
-            
-            # 计算行数
-            rows = (b + per_row - 1) // per_row  # 向上取整
-            
-            # 创建足够大的画布
-            frame_reshaped = np.zeros((rows * h, per_row * w, 4), dtype=np.uint8)
-            
-            # 填充画布
-            for bi in range(b):
-                row = bi // per_row
-                col = bi % per_row
-                # 将[c, h, w]转换为[h, w, c]
-                frame_reshaped[row*h:(row+1)*h, col*w:(col+1)*w] = np.transpose(frame[bi], (1, 2, 0))
-            
-            # 保存为PNG，使用PIL
-            frame_path = os.path.join(temp_dir, f"frame_{i:05d}.png")
-            
-            # 检查并打印第一帧的Alpha通道信息
-            if i == 0:
-                alpha_channel = frame_reshaped[:, :, 3]
-                transparent_pixels = np.sum(alpha_channel < 255)
-                total_pixels = alpha_channel.size
-                print(f"第一帧Alpha通道: 透明像素数量={transparent_pixels}, 总像素数={total_pixels}, 比例={transparent_pixels/total_pixels:.2%}")
-            
-            Image.fromarray(frame_reshaped, mode='RGBA').save(frame_path)
-            
-            # 额外保存第一帧用于检查
-            if i == 0:
-                debug_path = os.path.join(os.path.dirname(output_filename), f"debug_frame_0.png")
-                Image.fromarray(frame_reshaped, mode='RGBA').save(debug_path)
-                print(f"已保存调试帧到 {debug_path}")
-        
-        # 使用ffmpeg将PNG序列转换为webm
-        input_pattern = os.path.join(temp_dir, "frame_%05d.png")
-        
-        # 构建ffmpeg命令
-        cmd = [
-            ffmpeg_path,
-            "-y",  # 覆盖输出文件
-            "-framerate", str(fps),
-            "-i", input_pattern,
-            "-c:v", "libvpx-vp9",  # VP9编码器支持透明度
-            "-pix_fmt", "yuva420p",  # 像素格式，支持Alpha通道
-            "-b:v", f"{int(quality * 4000)}k",  # 比特率，根据quality调整
-            "-auto-alt-ref", "0",
-            "-metadata:s:v:0", "alpha_mode=1",  # 指示视频有Alpha通道
-            output_filename
-        ]
-        
-        try:
-            # 执行ffmpeg命令
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                print(f"ffmpeg命令失败，错误码: {process.returncode}")
-                print(f"stderr: {stderr.decode('utf-8', errors='ignore')}")
-                # 如果ffmpeg失败，尝试保存为mp4作为备选
-                mp4_filename = output_filename.replace(".webm", ".mp4")
-                print(f"尝试保存为MP4: {mp4_filename}")
-                # 转换回PyTorch张量，只使用RGB通道
-                torch_x = torch.from_numpy(x).to(torch.float32)
-                save_bcthw_as_mp4(torch_x[:, :3], mp4_filename, fps=fps, crf=int((1.0 - quality) * 51))
-            else:
-                print(f"成功保存透明视频到 {output_filename}")
-                
-        except Exception as e:
-            print(f"保存透明视频失败: {str(e)}")
-            # 如果ffmpeg失败，尝试保存为mp4作为备选
-            mp4_filename = output_filename.replace(".webm", ".mp4")
-            print(f"尝试保存为MP4: {mp4_filename}")
-            # 转换回PyTorch张量，只使用RGB通道
-            torch_x = torch.from_numpy(x).to(torch.float32)
-            save_bcthw_as_mp4(torch_x[:, :3], mp4_filename, fps=fps, crf=int((1.0 - quality) * 51))
-    
-    # 转换回PyTorch张量并返回
-    return torch.from_numpy(x).to(torch.float32)
