@@ -153,6 +153,10 @@ def process_video(video_path, output_dir, model_path, device, keep_frames):
     print("处理完成！")
 
 
+'''
+使用示例：
+python process_video.py --input "../inputs/华佗.mp4" --output "../outputs/华佗" --model-path "../hf_download/RMBG-2.0" --gpu 0 --keep-frames
+'''
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="使用 RMBG-2.0 对视频进行逐帧抠图，并合成为透明背景的 WebM 视频。")
     parser.add_argument("--input", type=str, required=True, help="输入视频文件的路径。")
