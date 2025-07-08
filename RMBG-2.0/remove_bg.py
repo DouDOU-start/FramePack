@@ -2,9 +2,7 @@ import os
 import sys
 import argparse
 from PIL import Image
-import torch
-from torchvision import transforms
-from transformers import AutoModelForImageSegmentation
+from bg_processor import BGProcessor
 
 class BackgroundRemover:
     """
@@ -19,28 +17,7 @@ class BackgroundRemover:
         Args:
             model_path (str): The path to the local Hugging Face model directory.
         """
-        # 1. Initialize device and model
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print(f"Using device: {self.device}")
-
-        try:
-            print(f"Loading model from: {model_path}")
-            self.model = AutoModelForImageSegmentation.from_pretrained(
-                model_path, trust_remote_code=True
-            ).to(self.device)
-            self.model.eval()
-        except Exception as e:
-            print(f"Error: Failed to load model from '{model_path}'.", file=sys.stderr)
-            print(f"Reason: {e}", file=sys.stderr)
-            sys.exit(1) # Exit if model loading fails
-        
-        # 2. Define image transformations
-        self.transform = transforms.Compose([
-            transforms.Resize((1024, 1024)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-        print("Model loaded successfully.")
+        self.processor = BGProcessor(model_path)
 
     def process(self, input_path: str, output_path: str):
         """
@@ -50,28 +27,18 @@ class BackgroundRemover:
             input_path (str): Path to the input image.
             output_path (str): Path to save the output image with a transparent background.
         """
-        # 1. Open and transform the image
+        # 1. Open image
         try:
             image = Image.open(input_path).convert("RGB")
         except FileNotFoundError:
             print(f"Error: Input file not found at '{input_path}'", file=sys.stderr)
             return
-
-        original_size = image.size
-        input_tensor = self.transform(image).unsqueeze(0).to(self.device)
-
-        # 2. Perform prediction
+        
+        # 2. Get mask
         print(f"Processing '{os.path.basename(input_path)}'...")
-        with torch.no_grad():
-            # Use autocast for better performance on modern GPUs
-            if self.device.type == 'cuda':
-                 with torch.autocast(device_type="cuda"):
-                    preds = self.model(input_tensor)[-1].sigmoid()
-            else:
-                 preds = self.model(input_tensor)[-1].sigmoid()
+        mask = self.processor.get_mask(image)
 
-        # 3. Process the mask and apply it
-        mask = transforms.ToPILImage()(preds.cpu().squeeze()).resize(original_size, Image.LANCZOS)
+        # 3. Apply the mask
         image.putalpha(mask)
 
         # 4. Save the result
@@ -103,7 +70,7 @@ def main():
 
 '''
 使用示例：
-python remove_bg.py --input "../inputs/华佗.jpg" --output "../outputs/华佗.png"
+python remove_bg.py --input "../inputs/华佗.png" --output "../outputs/华佗.png"
 '''
 if __name__ == '__main__':
     main()
