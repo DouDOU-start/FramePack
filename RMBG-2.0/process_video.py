@@ -30,7 +30,29 @@ def get_video_framerate(video_path: str) -> str:
         print(f"警告: 使用 ffprobe 获取帧率失败: {e}。将默认使用 30fps。")
         return "30"
 
-def process_video(video_path, output_dir, model_path, device, keep_frames, output_format="webm"):
+def get_video_resolution(video_path: str) -> tuple[int, int] | None:
+    """使用 ffprobe 获取视频的分辨率 (height, width)，如果失败则返回 None。"""
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        print("警告: 未找到 ffprobe。无法确定原始分辨率。")
+        return None
+    try:
+        command = [
+            ffprobe_path,
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            video_path,
+        ]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        width, height = map(int, result.stdout.strip().split('x'))
+        return height, width
+    except Exception as e:
+        print(f"警告: 使用 ffprobe 获取分辨率失败: {e}。")
+        return None
+
+def process_video(video_path, output_dir, model_path, device, keep_frames, output_format="webm", resolution=None, output_aspect_ratio=None):
     """
     处理视频：提取帧、移除背景、保存处理后的帧，并最终合成为具有透明背景的视频。
     """
@@ -73,7 +95,32 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
         model.to(device=device)
         model.eval()
 
-        image_size = (1024, 1024)
+        target_size = None
+        if resolution:
+            target_size = resolution
+        else:
+            original_resolution = get_video_resolution(video_path)
+            if original_resolution:
+                print(f"检测到视频原始分辨率: {original_resolution[1]}x{original_resolution[0]}")
+                target_size = original_resolution
+            else:
+                print("无法检测到视频分辨率，将默认使用 1024x1024。")
+                target_size = (1024, 1024)
+
+        # 调整分辨率，使其成为32的倍数，以满足模型要求
+        h, w = target_size
+        new_h = (h // 32) * 32
+        new_w = (w // 32) * 32
+        if new_h == 0 or new_w == 0: # 避免分辨率过小导致尺寸为0
+            new_h = ((h - 1) // 32 + 1) * 32
+            new_w = ((w - 1) // 32 + 1) * 32
+        
+        image_size = (new_h, new_w)
+        if image_size != target_size:
+            print(f"为满足模型要求，将分辨率从 {w}x{h} 调整为 {image_size[1]}x{image_size[0]}")
+        
+        print(f"处理时将使用分辨率: {image_size[1]}x{image_size[0]}")
+
         mean = torch.tensor([0.485, 0.456, 0.406])
         std = torch.tensor([0.229, 0.224, 0.225])
         transform = tv_transforms.Compose([
@@ -107,6 +154,37 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
 
             mask = tv_transforms.ToPILImage()(preds[0].squeeze()).resize(image_pil.size, Image.LANCZOS)
             image_pil.putalpha(mask)
+
+            # 如果用户指定了分辨率，则在应用其他变换前调整帧大小
+            if resolution:
+                output_size = (resolution[1], resolution[0]) # (width, height) for PIL
+                if image_pil.size != output_size:
+                    print(f"将帧大小从 {image_pil.size} 调整到 {output_size}")
+                    image_pil = image_pil.resize(output_size, Image.LANCZOS)
+
+            if output_aspect_ratio:
+                w, h = image_pil.size
+                target_w_ratio, target_h_ratio = output_aspect_ratio
+                target_aspect = target_w_ratio / target_h_ratio
+                current_aspect = w / h
+
+                if abs(current_aspect - target_aspect) > 1e-6: # 仅在宽高比不同时调整
+                    if current_aspect > target_aspect:
+                        # 当前图像比目标"宽"，需要增加高度
+                        new_w = w
+                        new_h = int(w / target_aspect)
+                        paste_pos = (0, (new_h - h) // 2)
+                    else:
+                        # 当前图像比目标"高"，需要增加宽度
+                        new_h = h
+                        new_w = int(h * target_aspect)
+                        paste_pos = ((new_w - w) // 2, 0)
+                    
+                    # 创建具有目标宽高比的透明画布
+                    final_image = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+                    final_image.paste(image_pil, paste_pos, image_pil)
+                    image_pil = final_image
+
             output_path = os.path.join(output_dir, frame_file)
             image_pil.save(output_path)
         except Exception as e:
@@ -191,12 +269,30 @@ if __name__ == "__main__":
         default='webm',
         help="输出视频的格式。可选 'webm' 或 'mov'。默认为 'webm'。"
     )
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        nargs=2,
+        metavar=('WIDTH', 'HEIGHT'),
+        help="指定处理视频时的分辨率 (e.g., --resolution 1920 1080)。如果未指定，则自动检测原始分辨率。"
+    )
+    parser.add_argument(
+        "--output-aspect-ratio",
+        type=float,
+        nargs=2,
+        metavar=('W_RATIO', 'H_RATIO'),
+        help="设置输出视频的宽高比，例如 --output-aspect-ratio 1 4。多余部分将以透明填充。"
+    )
 
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         print(f"错误: 输入视频文件不存在: {args.input}")
         sys.exit(1)
+
+    resolution_arg = None
+    if args.resolution:
+        resolution_arg = (args.resolution[1], args.resolution[0]) # (height, width) for torchvision
 
     if args.gpu >= 0 and torch.cuda.is_available():
         device = torch.device(f"cuda:{args.gpu}")
@@ -205,4 +301,4 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("将使用 CPU。")
     
-    process_video(args.input, args.output, args.model_path, device, args.keep_frames, args.output_format)
+    process_video(args.input, args.output, args.model_path, device, args.keep_frames, args.output_format, resolution_arg, args.output_aspect_ratio)
