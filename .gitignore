@@ -1,17 +1,3 @@
-/system/
-/inputs/
-/outputs/
-/outputs/
-/hf_download/
-/repo/
-*.mp4
-*.webm
-*.png
-*.jpg
-*.jpeg
-cache/
-.cache/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -30,88 +16,57 @@ parts/
 sdist/
 var/
 wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# 虚拟环境
-venv/
-env/
-ENV/
+# Virtual environments
 .env
 .venv
+env/
+venv/
+ENV/
 env.bak/
 venv.bak/
 
-# PyInstaller
-*.manifest
-*.spec
-
-# 安装日志
-pip-log.txt
-pip-delete-this-directory.txt
-
-# 测试和覆盖率
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# 文档
-docs/_build/
-
-# 编辑器和IDE文件
-.idea/
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
 *~
-.spyderproject
-.spyproject
-.ropeproject
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-.pytype/
-.ruff_cache/
 
-# 数据库
-db.sqlite3
-db.sqlite3-journal
-
-# 框架和工具
-.ipynb_checkpoints
-profile_default/
-ipython_config.py
-.pdm.toml
-.pdm-python
-.pdm-build/
-__pypackages__/
-celerybeat-schedule
-celerybeat.pid
-*.sage.py
-.pypirc
-instance/
-.webassets-cache
-.scrapy
-.pybuilder/
-target/
-
-# 翻译文件
-*.mo
-*.pot
-
-# 操作系统文件
+# OS
 .DS_Store
-Thumbs.db 
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+outputs/*.mp4
+outputs/*.webm
+outputs/*.mov
+outputs/*.png
+outputs/*.jpg
+inputs/*.mp4
+inputs/*.webm
+inputs/*.mov
+inputs/*.png
+inputs/*.jpg
+test_input.png
+test_output_*.png
+*.tmp
+*.temp
+*.log
+
+# Model files (too large for git)
+hf_download/
+models/
+checkpoints/
+
+# Temporary files
+temp/
+tmp/

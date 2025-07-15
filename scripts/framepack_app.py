@@ -1,8 +1,13 @@
+import os
+import sys
+
+# Add parent directory to path to find diffusers_helper
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+
 from diffusers_helper.hf_login import login
 
-import os
-
-os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
+os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), '..', 'hf_download')))
 
 import gradio as gr
 import torch
@@ -40,6 +45,7 @@ args = parser.parse_args()
 
 print(args)
 
+gpu = 0  # Default GPU device
 free_mem_gb = get_cuda_free_memory_gb(gpu)
 high_vram = free_mem_gb > 60
 
@@ -55,7 +61,7 @@ vae = AutoencoderKLHunyuanVideo.from_pretrained("hunyuanvideo-community/HunyuanV
 feature_extractor = SiglipImageProcessor.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='feature_extractor')
 image_encoder = SiglipVisionModel.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='image_encoder', torch_dtype=torch.float16).cpu()
 
-transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained('lllyasviel/FramePack_F1_I2V_HY_20250503', torch_dtype=torch.bfloat16).cpu()
+transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained('lllyasviel/FramePackI2V_HY', torch_dtype=torch.bfloat16).cpu()
 
 vae.eval()
 text_encoder.eval()
@@ -100,9 +106,17 @@ os.makedirs(outputs_folder, exist_ok=True)
 
 
 @torch.no_grad()
-def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
+def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, enable_loop, loop_strength, loop_period, temporal_smoothing):
     total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
     total_latent_sections = int(max(round(total_latent_sections), 1))
+    
+    # Calculate actual video frames and adjust loop period
+    total_video_frames = int(total_second_length * 30)
+    if enable_loop and loop_period > 0:
+        # Convert frame-based loop period to latent-based
+        loop_period_latent = max(1, loop_period // 4)
+    else:
+        loop_period_latent = None
 
     job_id = generate_timestamp()
 
@@ -178,19 +192,38 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
         stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Start sampling ...'))))
 
         rnd = torch.Generator("cpu").manual_seed(seed)
+        num_frames = latent_window_size * 4 - 3
 
-        history_latents = torch.zeros(size=(1, 16, 16 + 2 + 1, height // 8, width // 8), dtype=torch.float32).cpu()
+        history_latents = torch.zeros(size=(1, 16, 1 + 2 + 16, height // 8, width // 8), dtype=torch.float32).cpu()
         history_pixels = None
+        total_generated_latent_frames = 0
 
-        history_latents = torch.cat([history_latents, start_latent.to(history_latents)], dim=2)
-        total_generated_latent_frames = 1
+        latent_paddings = reversed(range(total_latent_sections))
 
-        for section_index in range(total_latent_sections):
+        if total_latent_sections > 4:
+            # In theory the latent_paddings should follow the above sequence, but it seems that duplicating some
+            # items looks better than expanding it when total_latent_sections > 4
+            # One can try to remove below trick and just
+            # use `latent_paddings = list(reversed(range(total_latent_sections)))` to compare
+            latent_paddings = [3] + [2] * (total_latent_sections - 3) + [1, 0]
+
+        for latent_padding in latent_paddings:
+            is_last_section = latent_padding == 0
+            latent_padding_size = latent_padding * latent_window_size
+
             if stream.input_queue.top() == 'end':
                 stream.output_queue.push(('end', None))
                 return
 
-            print(f'section_index = {section_index}, total_latent_sections = {total_latent_sections}')
+            print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}')
+
+            indices = torch.arange(0, sum([1, latent_padding_size, latent_window_size, 1, 2, 16])).unsqueeze(0)
+            clean_latent_indices_pre, blank_indices, latent_indices, clean_latent_indices_post, clean_latent_2x_indices, clean_latent_4x_indices = indices.split([1, latent_padding_size, latent_window_size, 1, 2, 16], dim=1)
+            clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
+
+            clean_latents_pre = start_latent.to(history_latents)
+            clean_latents_post, clean_latents_2x, clean_latents_4x = history_latents[:, :, :1 + 2 + 16, :, :].split([1, 2, 16], dim=2)
+            clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
 
             if not high_vram:
                 unload_complete_models()
@@ -219,19 +252,12 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
                 stream.output_queue.push(('progress', (preview, desc, make_progress_bar_html(percentage, hint))))
                 return
 
-            indices = torch.arange(0, sum([1, 16, 2, 1, latent_window_size])).unsqueeze(0)
-            clean_latent_indices_start, clean_latent_4x_indices, clean_latent_2x_indices, clean_latent_1x_indices, latent_indices = indices.split([1, 16, 2, 1, latent_window_size], dim=1)
-            clean_latent_indices = torch.cat([clean_latent_indices_start, clean_latent_1x_indices], dim=1)
-
-            clean_latents_4x, clean_latents_2x, clean_latents_1x = history_latents[:, :, -sum([16, 2, 1]):, :, :].split([16, 2, 1], dim=2)
-            clean_latents = torch.cat([start_latent.to(history_latents), clean_latents_1x], dim=2)
-
             generated_latents = sample_hunyuan(
                 transformer=transformer,
                 sampler='unipc',
                 width=width,
                 height=height,
-                frames=latent_window_size * 4 - 3,
+                frames=num_frames,
                 real_guidance_scale=cfg,
                 distilled_guidance_scale=gs,
                 guidance_rescale=rs,
@@ -255,25 +281,32 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
                 clean_latents_4x=clean_latents_4x,
                 clean_latent_4x_indices=clean_latent_4x_indices,
                 callback=callback,
+                enable_loop=enable_loop,
+                loop_strength=loop_strength,
+                # loop_period=loop_period_latent,
+                temporal_smoothing=temporal_smoothing,
             )
 
+            if is_last_section:
+                generated_latents = torch.cat([start_latent.to(generated_latents), generated_latents], dim=2)
+
             total_generated_latent_frames += int(generated_latents.shape[2])
-            history_latents = torch.cat([history_latents, generated_latents.to(history_latents)], dim=2)
+            history_latents = torch.cat([generated_latents.to(history_latents), history_latents], dim=2)
 
             if not high_vram:
                 offload_model_from_device_for_memory_preservation(transformer, target_device=gpu, preserved_memory_gb=8)
                 load_model_as_complete(vae, target_device=gpu)
 
-            real_history_latents = history_latents[:, :, -total_generated_latent_frames:, :, :]
+            real_history_latents = history_latents[:, :, :total_generated_latent_frames, :, :]
 
             if history_pixels is None:
                 history_pixels = vae_decode(real_history_latents, vae).cpu()
             else:
-                section_latent_frames = latent_window_size * 2
+                section_latent_frames = (latent_window_size * 2 + 1) if is_last_section else (latent_window_size * 2)
                 overlapped_frames = latent_window_size * 4 - 3
 
-                current_pixels = vae_decode(real_history_latents[:, :, -section_latent_frames:], vae).cpu()
-                history_pixels = soft_append_bcthw(history_pixels, current_pixels, overlapped_frames)
+                current_pixels = vae_decode(real_history_latents[:, :, :section_latent_frames], vae).cpu()
+                history_pixels = soft_append_bcthw(current_pixels, history_pixels, overlapped_frames)
 
             if not high_vram:
                 unload_complete_models()
@@ -285,6 +318,9 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
             print(f'Decoded. Current latent shape {real_history_latents.shape}; pixel shape {history_pixels.shape}')
 
             stream.output_queue.push(('file', output_filename))
+
+            if is_last_section:
+                break
     except:
         traceback.print_exc()
 
@@ -297,7 +333,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
     return
 
 
-def process(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
+def process(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, enable_loop, loop_strength, loop_period, temporal_smoothing):
     global stream
     assert input_image is not None, 'No input image!'
 
@@ -305,7 +341,7 @@ def process(input_image, prompt, n_prompt, seed, total_second_length, latent_win
 
     stream = AsyncStream()
 
-    async_run(worker, input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf)
+    async_run(worker, input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, enable_loop, loop_strength, loop_period, temporal_smoothing)
 
     output_filename = None
 
@@ -339,7 +375,7 @@ quick_prompts = [[x] for x in quick_prompts]
 css = make_progress_bar_css()
 block = gr.Blocks(css=css).queue()
 with block:
-    gr.Markdown('# FramePack-F1')
+    gr.Markdown('# FramePack')
     with gr.Row():
         with gr.Column():
             input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
@@ -368,16 +404,25 @@ with block:
                 gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
 
                 mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=16, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
+                
+                # Loop control parameters
+                with gr.Group():
+                    gr.Markdown("### Loop Control (Experimental)")
+                    enable_loop = gr.Checkbox(label='Enable Loop', value=False, info='Generate seamless looping videos')
+                    loop_strength = gr.Slider(label="Loop Strength", minimum=0.0, maximum=1.0, value=1.0, step=0.1, info='Strength of the loop effect (0=no loop, 1=full loop)')
+                    loop_period = gr.Slider(label="Loop Period (frames)", minimum=8, maximum=120, value=30, step=1, info='Period of the loop in frames (leave as default for full video length)')
+                    temporal_smoothing = gr.Slider(label="Temporal Smoothing", minimum=0.0, maximum=0.5, value=0.0, step=0.05, info='Smoothing to reduce flickering (0=no smoothing)')
 
         with gr.Column():
             preview_image = gr.Image(label="Next Latents", height=200, visible=False)
             result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
+            gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
             progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
             progress_bar = gr.HTML('', elem_classes='no-generating-animation')
 
     gr.HTML('<div style="text-align:center; margin-top:20px;">Share your results and find ideas at the <a href="https://x.com/search?q=framepack&f=live" target="_blank">FramePack Twitter (X) thread</a></div>')
 
-    ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf]
+    ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, enable_loop, loop_strength, loop_period, temporal_smoothing]
     start_button.click(fn=process, inputs=ips, outputs=[result_video, preview_image, progress_desc, progress_bar, start_button, end_button])
     end_button.click(fn=end_process)
 

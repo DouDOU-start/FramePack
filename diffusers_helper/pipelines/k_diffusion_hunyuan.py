@@ -24,6 +24,125 @@ def get_flux_sigmas_from_mu(n, mu):
     return sigmas
 
 
+def generate_looping_noise(shape, generator, device, loop_strength=1.0, loop_period=None):
+    """
+    Generate looping noise with smooth cyclic transitions.
+    
+    Args:
+        shape: Shape of the noise tensor (B, C, T, H, W)
+        generator: Random number generator
+        device: Device to create tensors on
+        loop_strength: Strength of the loop effect (0=no loop, 1=full loop)
+        loop_period: Period of the loop in frames (None=use full length)
+    
+    Returns:
+        Noise tensor with smooth cyclic transitions
+    """
+    B, C, T, H, W = shape
+    
+    if loop_strength == 0.0:
+        # No looping, return regular random noise
+        return torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
+    
+    # Use full length as period if not specified
+    if loop_period is None:
+        loop_period = T
+    
+    # Generate base noise for one complete cycle
+    base_noise = torch.randn((B, C, loop_period, H, W), generator=generator, device=device, dtype=torch.float32)
+    
+    if T <= loop_period:
+        # For sequences shorter than or equal to one period, use seamless wrapping
+        if T < loop_period:
+            # Extract the needed frames with seamless wrapping
+            indices = torch.arange(T, device=device) % loop_period
+            tiled_noise = base_noise[:, :, indices, :, :]
+        else:
+            tiled_noise = base_noise
+    else:
+        # For longer sequences, create seamless repetition
+        full_cycles = T // loop_period
+        remaining_frames = T % loop_period
+        
+        # Create the tiled sequence
+        tiled_noise = base_noise.repeat(1, 1, full_cycles, 1, 1)
+        
+        if remaining_frames > 0:
+            # Add remaining frames with seamless wrapping
+            remaining_noise = base_noise[:, :, :remaining_frames, :, :]
+            tiled_noise = torch.cat([tiled_noise, remaining_noise], dim=2)
+    
+    # Apply cosine-based smoothing at boundaries for even smoother transitions
+    if T > loop_period and loop_strength > 0:
+        # Create smooth transition weights
+        transition_length = min(loop_period // 4, 8)  # Smooth transition over 1/4 of period or 8 frames
+        
+        for cycle_start in range(loop_period, T, loop_period):
+            if cycle_start + transition_length < T:
+                # Create cosine transition weights
+                t = torch.linspace(0, torch.pi, transition_length, device=device)
+                fade_out = (torch.cos(t) + 1) / 2  # 1 -> 0
+                fade_in = 1 - fade_out  # 0 -> 1
+                
+                # Apply smooth transition
+                for i in range(transition_length):
+                    frame_idx = cycle_start + i
+                    if frame_idx < T:
+                        weight_out = fade_out[i]
+                        weight_in = fade_in[i]
+                        
+                        # Blend current frame with corresponding frame from previous cycle
+                        prev_frame_idx = frame_idx - loop_period
+                        if prev_frame_idx >= 0:
+                            tiled_noise[:, :, frame_idx, :, :] = (
+                                weight_out * tiled_noise[:, :, prev_frame_idx, :, :] +
+                                weight_in * tiled_noise[:, :, frame_idx, :, :]
+                            )
+    
+    # Apply loop strength blending
+    if loop_strength < 1.0:
+        # Mix with regular random noise
+        random_noise = torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
+        tiled_noise = loop_strength * tiled_noise + (1 - loop_strength) * random_noise
+    
+    return tiled_noise
+
+
+def apply_temporal_smoothing(noise, smoothing_factor=0.1):
+    """
+    Apply temporal smoothing to noise to reduce flickering.
+    
+    Args:
+        noise: Input noise tensor (B, C, T, H, W)
+        smoothing_factor: Smoothing strength (0=no smoothing, 1=maximum smoothing)
+    
+    Returns:
+        Smoothed noise tensor
+    """
+    if smoothing_factor == 0.0:
+        return noise
+    
+    B, C, T, H, W = noise.shape
+    
+    # Apply 1D convolution along time dimension for smoothing
+    # Create a simple averaging kernel
+    kernel_size = 3
+    kernel = torch.ones(1, 1, kernel_size, device=noise.device, dtype=noise.dtype) / kernel_size
+    
+    # Reshape for convolution: (B*C*H*W, 1, T)
+    noise_flat = noise.permute(0, 1, 3, 4, 2).contiguous().view(-1, 1, T)
+    
+    # Apply padding and convolution
+    noise_padded = torch.nn.functional.pad(noise_flat, (1, 1), mode='circular')
+    smoothed_flat = torch.nn.functional.conv1d(noise_padded, kernel)
+    
+    # Reshape back to original shape
+    smoothed = smoothed_flat.view(B, C, H, W, T).permute(0, 1, 4, 2, 3).contiguous()
+    
+    # Mix with original noise
+    return smoothing_factor * smoothed + (1 - smoothing_factor) * noise
+
+
 @torch.inference_mode()
 def sample_hunyuan(
         transformer,
@@ -51,6 +170,10 @@ def sample_hunyuan(
         device=None,
         negative_kwargs=None,
         callback=None,
+        enable_loop=False,
+        loop_strength=1.0,
+        loop_period=None,
+        temporal_smoothing=0.0,
         **kwargs,
 ):
     device = device or transformer.device
@@ -58,7 +181,25 @@ def sample_hunyuan(
     if batch_size is None:
         batch_size = int(prompt_embeds.shape[0])
 
-    latents = torch.randn((batch_size, 16, (frames + 3) // 4, height // 8, width // 8), generator=generator, device=generator.device).to(device=device, dtype=torch.float32)
+    # Generate noise with optional looping
+    noise_shape = (batch_size, 16, (frames + 3) // 4, height // 8, width // 8)
+    
+    if enable_loop:
+        latents = generate_looping_noise(
+            noise_shape, 
+            generator=generator, 
+            device=generator.device, 
+            loop_strength=loop_strength, 
+            loop_period=loop_period
+        )
+        
+        # Apply temporal smoothing if requested
+        if temporal_smoothing > 0.0:
+            latents = apply_temporal_smoothing(latents, temporal_smoothing)
+    else:
+        latents = torch.randn(noise_shape, generator=generator, device=generator.device, dtype=torch.float32)
+    
+    latents = latents.to(device=device, dtype=torch.float32)
 
     B, C, T, H, W = latents.shape
     seq_length = T * H * W // 4
