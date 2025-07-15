@@ -52,7 +52,7 @@ def get_video_resolution(video_path: str) -> tuple[int, int] | None:
         print(f"警告: 使用 ffprobe 获取分辨率失败: {e}。")
         return None
 
-def process_video(video_path, output_dir, model_path, device, keep_frames, output_format="webm", resolution=None, output_aspect_ratio=None, padding_params=None, progress_callback=None):
+def process_video(video_path, output_dir, model_path, device, keep_frames, output_format="webm", resolution=None, output_aspect_ratio=None, padding_params=None, progress_callback=None, output_framerate=None):
     """
     处理视频：提取帧、移除背景、保存处理后的帧，并最终合成为具有透明背景的视频。
     
@@ -67,6 +67,7 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
         output_aspect_ratio: 输出宽高比 (w_ratio, h_ratio)
         padding_params: 填充参数字典，优先级最高
         progress_callback: 进度回调函数 (接受0-100的进度值)
+        output_framerate: 输出视频的帧率
     """
     # --- 1. Setup Directories ---
     temp_dir = os.path.join(output_dir, "temp_raw_frames")
@@ -83,8 +84,9 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
         return
 
     # 获取视频原始帧率以用于后续合成
-    framerate = get_video_framerate(video_path)
-    print(f"检测到视频帧率: {framerate}")
+    original_framerate = get_video_framerate(video_path)
+    framerate_to_use = output_framerate if output_framerate else original_framerate
+    print(f"检测到视频原始帧率: {original_framerate}，输出将使用帧率: {framerate_to_use}")
 
     try:
         subprocess.run(
@@ -320,7 +322,7 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
     try:
         command = [
             ffmpeg_path,
-            "-framerate", framerate,
+            "-framerate", framerate_to_use,
             "-i", input_frames_pattern,
         ]
 
@@ -407,6 +409,11 @@ if __name__ == "__main__":
         metavar=('W_RATIO', 'H_RATIO'),
         help="设置输出视频的宽高比，例如 --output-aspect-ratio 1 4。多余部分将以透明填充。"
     )
+    parser.add_argument(
+        "--output-framerate",
+        type=int,
+        help="指定输出视频的帧率。如果未指定，则回退到使用输入视频的帧率。"
+    )
 
     args = parser.parse_args()
 
@@ -425,4 +432,4 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("将使用 CPU。")
     
-    process_video(args.input, args.output, args.model_path, device, args.keep_frames, args.output_format, resolution_arg, args.output_aspect_ratio)
+    process_video(args.input, args.output, args.model_path, device, args.keep_frames, args.output_format, resolution_arg, args.output_aspect_ratio, output_framerate=args.output_framerate)

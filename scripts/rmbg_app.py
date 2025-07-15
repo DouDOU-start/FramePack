@@ -117,7 +117,7 @@ def change_background_color(input_image, bg_color):
     except Exception as e:
         return None, f"Error changing background color: {str(e)}"
 
-def process_video_background(input_video, output_format, keep_frames, resolution_setting, custom_width, custom_height, aspect_ratio_setting, custom_aspect_width, custom_aspect_height, progress=gr.Progress()):
+def process_video_background(input_video, output_format, keep_frames, output_framerate, resolution_setting, custom_width, custom_height, aspect_ratio_setting, custom_aspect_width, custom_aspect_height, progress=gr.Progress()):
     """Process video to remove background"""
     if input_video is None:
         return None, "请上传一个视频"
@@ -251,6 +251,10 @@ def process_video_background(input_video, output_format, keep_frames, resolution
         # 定义进度回调函数来更新Gradio进度条
         def update_progress(percent):
             progress(percent / 100)
+
+        framerate_to_pass = None
+        if output_framerate != "Original":
+            framerate_to_pass = str(output_framerate)
         
         process_video(
             video_path=input_video,
@@ -261,7 +265,8 @@ def process_video_background(input_video, output_format, keep_frames, resolution
             output_format=output_format,
             resolution=resolution,
             padding_params=padding_params,
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            output_framerate=framerate_to_pass
         )
         
         # Find the output video file
@@ -279,9 +284,11 @@ def process_video_background(input_video, output_format, keep_frames, resolution
             # Add resolution info
             status_msg += f" | 分辨率: {final_width}x{final_height}"
 
-            # Add aspect ratio info
+            # Add aspect ratio and framerate info
             current_aspect_ratio = final_width / final_height
             status_msg += f" | 宽高比: {current_aspect_ratio:.3f}:1 ({aspect_ratio_setting})"
+            status_msg += f" | 帧率: {output_framerate} FPS"
+
 
             # Add padding info
             if padding_params:
@@ -422,6 +429,13 @@ def create_gradio_interface():
                                 info="将处理后的帧保存为PNG文件"
                             )
 
+                        output_framerate_selector = gr.Radio(
+                            choices=["Original", "24", "25", "30", "60"],
+                            label="输出帧率 (FPS)",
+                            value="Original",
+                            info="选择输出视频的帧率"
+                        )
+
                         # Resolution settings
                         with gr.Group():
                             gr.Markdown("### 📐 输出分辨率")
@@ -532,7 +546,7 @@ def create_gradio_interface():
                 # 使用进度条功能调用处理函数
                 process_video_btn.click(
                     fn=process_video_background,
-                    inputs=[input_video, output_format, keep_frames, resolution_setting, custom_width, custom_height, aspect_ratio_setting, custom_aspect_width, custom_aspect_height],
+                    inputs=[input_video, output_format, keep_frames, output_framerate_selector, resolution_setting, custom_width, custom_height, aspect_ratio_setting, custom_aspect_width, custom_aspect_height],
                     outputs=[output_video, status_video],
                     show_progress=True
                 )
@@ -545,6 +559,12 @@ def create_gradio_interface():
         - **颜色更换**: 用纯色替换背景
         - **视频处理**: 需要安装FFmpeg才能处理视频
         - **支持格式**: 图像（JPG, PNG等），视频（MP4, MOV等）
+
+        ### 🎞️ 帧率设置:
+        - **Original**: 使用原始视频的帧率。
+        - **24 FPS**: 电影标准帧率，具有电影感。
+        - **30 FPS**: 标准视频帧率，适用于大多数网络视频。
+        - **60 FPS**: 高帧率，画面更流畅，适合游戏录像或慢动作。
 
         ### 📐 分辨率设置:
         - **原始**: 保持原始视频分辨率（当宽高比也为原始时）
