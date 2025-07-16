@@ -319,6 +319,10 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
     output_video_path = os.path.join(output_dir, output_video_filename)
     input_frames_pattern = os.path.join(output_dir, "frame_%06d.png")
 
+    print(f"输出文件名: {output_video_filename}")
+    print(f"输出路径: {output_video_path}")
+    print(f"目标格式: {output_format}")
+
     try:
         command = [
             ffmpeg_path,
@@ -335,21 +339,71 @@ def process_video(video_path, output_dir, model_path, device, keep_frames, outpu
                 "-auto-alt-ref", "0",
             ])
         elif output_format == 'mov':
-            # 使用 ProRes 编码器，支持 alpha 通道
-            command.extend([
-                "-c:v", "prores_ks",
-                "-pix_fmt", "yuva444p10le",
-                "-profile:v", "4444", 
-                "-qscale:v", "9" # qscale 范围 1-31, 数字越小质量越高
-            ])
+            # 首先尝试使用 ProRes 编码器，支持 alpha 通道
+            # 如果不支持，回退到 H.264 with alpha
+            try:
+                # 检查是否支持 prores_ks 编码器
+                check_prores = subprocess.run([
+                    ffmpeg_path, "-encoders"
+                ], capture_output=True, text=True, check=True)
+
+                if "prores_ks" in check_prores.stdout:
+                    print("使用 ProRes 4444 编码器（支持透明度）")
+                    command.extend([
+                        "-c:v", "prores_ks",
+                        "-pix_fmt", "yuva444p10le",
+                        "-profile:v", "4444",
+                        "-qscale:v", "9" # qscale 范围 1-31, 数字越小质量越高
+                    ])
+                else:
+                    print("ProRes 编码器不可用，使用 H.264 with alpha")
+                    command.extend([
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuva420p",
+                        "-crf", "18",
+                        "-preset", "medium"
+                    ])
+            except:
+                print("检查编码器失败，使用默认 H.264 with alpha")
+                command.extend([
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuva420p",
+                    "-crf", "18",
+                    "-preset", "medium"
+                ])
+
+        # 对于MOV格式，强制指定格式
+        if output_format == 'mov':
+            command.extend(["-f", "mov"])
+        elif output_format == 'webm':
+            command.extend(["-f", "webm"])
 
         command.extend([
             "-y",
             output_video_path,
         ])
         print(f"运行 FFmpeg 命令: {' '.join(command)}")
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
         print(f"成功创建透明视频: {output_video_path}")
+
+        # 验证输出文件格式
+        try:
+            verify_command = [ffmpeg_path, "-i", output_video_path]
+            verify_result = subprocess.run(verify_command, capture_output=True, text=True)
+            if verify_result.stderr:
+                format_info = verify_result.stderr
+                if output_format == 'mov':
+                    if "mov,mp4" in format_info or "QuickTime" in format_info:
+                        print(f"✅ 确认输出格式为 MOV (QuickTime)")
+                    else:
+                        print(f"⚠️ 输出格式可能不正确，检测到: {format_info.split('Input #0')[1].split(',')[0] if 'Input #0' in format_info else '未知'}")
+                elif output_format == 'webm':
+                    if "webm" in format_info or "matroska" in format_info:
+                        print(f"✅ 确认输出格式为 WebM")
+                    else:
+                        print(f"⚠️ 输出格式可能不正确")
+        except Exception as e:
+            print(f"无法验证输出格式: {e}")
         
         # 更新进度到100%
         if progress_callback:

@@ -278,8 +278,29 @@ def process_video_background(input_video, output_format, keep_frames, output_fra
             os.makedirs("./outputs", exist_ok=True)
             shutil.copy2(output_video_path, final_output)
 
+            # Verify actual output file format
+            actual_format = output_format
+            try:
+                import subprocess
+                ffprobe_path = shutil.which("ffprobe")
+                if ffprobe_path:
+                    verify_cmd = [ffprobe_path, "-v", "quiet", "-print_format", "json", "-show_format", final_output]
+                    result = subprocess.run(verify_cmd, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        import json
+                        format_info = json.loads(result.stdout)
+                        format_name = format_info.get('format', {}).get('format_name', '')
+                        if output_format == 'mov' and 'mov' in format_name:
+                            actual_format = f"{output_format} ✅"
+                        elif output_format == 'mov' and 'mp4' in format_name:
+                            actual_format = f"{output_format} ⚠️ (实际为MP4)"
+                        elif output_format == 'webm' and 'webm' in format_name:
+                            actual_format = f"{output_format} ✅"
+            except:
+                pass
+
             # Create status message with resolution and aspect ratio info
-            status_msg = f"视频处理成功! 输出格式: {output_format}"
+            status_msg = f"视频处理成功! 输出格式: {actual_format}"
 
             # Add resolution info
             status_msg += f" | 分辨率: {final_width}x{final_height}"
@@ -299,12 +320,16 @@ def process_video_background(input_video, output_format, keep_frames, output_fra
             else:
                 status_msg += " | 处理方式: 保持原始宽高比"
 
-            return final_output, status_msg
+            # 对于MOV格式，提供下载链接以避免Gradio自动转换
+            if output_format == 'mov':
+                return final_output, final_output, status_msg + " | 💡 MOV文件请使用下载链接获取原始格式"
+            else:
+                return final_output, None, status_msg
         else:
-            return None, "视频处理失败 - 未生成输出文件"
+            return None, None, "视频处理失败 - 未生成输出文件"
             
     except Exception as e:
-        return None, f"处理视频时出错: {str(e)}"
+        return None, None, f"处理视频时出错: {str(e)}"
     finally:
         # Clean up temporary directory
         if 'temp_dir' in locals():
@@ -538,8 +563,15 @@ def create_gradio_interface():
                             label="处理后的视频（透明背景）",
                             height=400
                         )
+
+                        # 添加下载链接组件（特别是对于MOV格式）
+                        download_link = gr.File(
+                            label="下载原始格式视频",
+                            visible=False
+                        )
+
                         status_video = gr.Textbox(
-                            label="状态", 
+                            label="状态",
                             interactive=False
                         )
                 
@@ -547,8 +579,21 @@ def create_gradio_interface():
                 process_video_btn.click(
                     fn=process_video_background,
                     inputs=[input_video, output_format, keep_frames, output_framerate_selector, resolution_setting, custom_width, custom_height, aspect_ratio_setting, custom_aspect_width, custom_aspect_height],
-                    outputs=[output_video, status_video],
+                    outputs=[output_video, download_link, status_video],
                     show_progress=True
+                )
+
+                # 根据输出格式显示/隐藏下载链接
+                def toggle_download_link(format_choice):
+                    if format_choice == 'mov':
+                        return gr.update(visible=True)
+                    else:
+                        return gr.update(visible=False)
+
+                output_format.change(
+                    fn=toggle_download_link,
+                    inputs=[output_format],
+                    outputs=[download_link]
                 )
         
         # Footer with information
@@ -559,6 +604,7 @@ def create_gradio_interface():
         - **颜色更换**: 用纯色替换背景
         - **视频处理**: 需要安装FFmpeg才能处理视频
         - **支持格式**: 图像（JPG, PNG等），视频（MP4, MOV等）
+        - **MOV格式**: 由于浏览器兼容性，MOV文件请使用下载链接获取原始格式
 
         ### 🎞️ 帧率设置:
         - **Original**: 使用原始视频的帧率。
