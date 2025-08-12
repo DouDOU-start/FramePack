@@ -43,75 +43,76 @@ except Exception as _rmbg_import_err:
     print(f"[RMBG] Import warning: {_rmbg_import_err}")
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--share', action='store_true')
-parser.add_argument("--server", type=str, default='0.0.0.0')
-parser.add_argument("--port", type=int, required=False)
-parser.add_argument("--inbrowser", action='store_true')
-args = parser.parse_args()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--share', action='store_true')
+    parser.add_argument("--server", type=str, default='0.0.0.0')
+    parser.add_argument("--port", type=int, required=False)
+    parser.add_argument("--inbrowser", action='store_true')
+    args = parser.parse_args()
 
 # for win desktop probably use --server 127.0.0.1 --inbrowser
 # For linux server probably use --server 127.0.0.1 or do not use any cmd flags
 
-print(args)
+    print(args)
 
-free_mem_gb = get_cuda_free_memory_gb(gpu)
-high_vram = free_mem_gb > 60
+    free_mem_gb = get_cuda_free_memory_gb(gpu)
+    high_vram = free_mem_gb > 60
 
-print(f'Free VRAM {free_mem_gb} GB')
-print(f'High-VRAM Mode: {high_vram}')
+    print(f'Free VRAM {free_mem_gb} GB')
+    print(f'High-VRAM Mode: {high_vram}')
 
-text_encoder = LlamaModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder', torch_dtype=torch.float16).cpu()
-text_encoder_2 = CLIPTextModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder_2', torch_dtype=torch.float16).cpu()
-tokenizer = LlamaTokenizerFast.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='tokenizer')
-tokenizer_2 = CLIPTokenizer.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='tokenizer_2')
-vae = AutoencoderKLHunyuanVideo.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='vae', torch_dtype=torch.float16).cpu()
+    text_encoder = LlamaModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder', torch_dtype=torch.float16).cpu()
+    text_encoder_2 = CLIPTextModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder_2', torch_dtype=torch.float16).cpu()
+    tokenizer = LlamaTokenizerFast.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='tokenizer')
+    tokenizer_2 = CLIPTokenizer.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='tokenizer_2')
+    vae = AutoencoderKLHunyuanVideo.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='vae', torch_dtype=torch.float16).cpu()
 
-feature_extractor = SiglipImageProcessor.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='feature_extractor')
-image_encoder = SiglipVisionModel.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='image_encoder', torch_dtype=torch.float16).cpu()
+    feature_extractor = SiglipImageProcessor.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='feature_extractor')
+    image_encoder = SiglipVisionModel.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='image_encoder', torch_dtype=torch.float16).cpu()
 
-transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained('lllyasviel/FramePackI2V_HY', torch_dtype=torch.bfloat16).cpu()
+    transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained('lllyasviel/FramePackI2V_HY', torch_dtype=torch.bfloat16).cpu()
 
-vae.eval()
-text_encoder.eval()
-text_encoder_2.eval()
-image_encoder.eval()
-transformer.eval()
+    vae.eval()
+    text_encoder.eval()
+    text_encoder_2.eval()
+    image_encoder.eval()
+    transformer.eval()
 
-if not high_vram:
-    vae.enable_slicing()
-    vae.enable_tiling()
+    if not high_vram:
+        vae.enable_slicing()
+        vae.enable_tiling()
 
-transformer.high_quality_fp32_output_for_inference = True
-print('transformer.high_quality_fp32_output_for_inference = True')
+    transformer.high_quality_fp32_output_for_inference = True
+    print('transformer.high_quality_fp32_output_for_inference = True')
 
-transformer.to(dtype=torch.bfloat16)
-vae.to(dtype=torch.float16)
-image_encoder.to(dtype=torch.float16)
-text_encoder.to(dtype=torch.float16)
-text_encoder_2.to(dtype=torch.float16)
+    transformer.to(dtype=torch.bfloat16)
+    vae.to(dtype=torch.float16)
+    image_encoder.to(dtype=torch.float16)
+    text_encoder.to(dtype=torch.float16)
+    text_encoder_2.to(dtype=torch.float16)
 
-vae.requires_grad_(False)
-text_encoder.requires_grad_(False)
-text_encoder_2.requires_grad_(False)
-image_encoder.requires_grad_(False)
-transformer.requires_grad_(False)
+    vae.requires_grad_(False)
+    text_encoder.requires_grad_(False)
+    text_encoder_2.requires_grad_(False)
+    image_encoder.requires_grad_(False)
+    transformer.requires_grad_(False)
 
-if not high_vram:
-    # DynamicSwapInstaller is same as huggingface's enable_sequential_offload but 3x faster
-    DynamicSwapInstaller.install_model(transformer, device=gpu)
-    DynamicSwapInstaller.install_model(text_encoder, device=gpu)
-else:
-    text_encoder.to(gpu)
-    text_encoder_2.to(gpu)
-    image_encoder.to(gpu)
-    vae.to(gpu)
-    transformer.to(gpu)
+    if not high_vram:
+        # DynamicSwapInstaller is same as huggingface's enable_sequential_offload but 3x faster
+        DynamicSwapInstaller.install_model(transformer, device=gpu)
+        DynamicSwapInstaller.install_model(text_encoder, device=gpu)
+    else:
+        text_encoder.to(gpu)
+        text_encoder_2.to(gpu)
+        image_encoder.to(gpu)
+        vae.to(gpu)
+        transformer.to(gpu)
 
-stream = AsyncStream()
+    stream = AsyncStream()
 
-outputs_folder = './outputs/'
-os.makedirs(outputs_folder, exist_ok=True)
+    outputs_folder = './outputs/'
+    os.makedirs(outputs_folder, exist_ok=True)
 
 
 @torch.no_grad()
@@ -621,9 +622,9 @@ quick_prompts = [
 quick_prompts = [[x] for x in quick_prompts]
 
 
-css = make_progress_bar_css()
-block = gr.Blocks(css=css).queue()
-with block:
+    css = make_progress_bar_css()
+    block = gr.Blocks(css=css).queue()
+    with block:
     gr.Markdown('## FramePack 工具集')
     with gr.Tabs():
         # ============= Tab 1: FramePack 视频生成 =============
@@ -826,9 +827,13 @@ with block:
                 inputs=[ff_video_in, ff_crop_type, ff_crop_tw, ff_crop_th, ff_crop_x, ff_crop_y, ff_aspect, ff_out_fmt, ff_quality],
                 outputs=[ff_cropped_video],
             )
-block.launch(
-    server_name=args.server,
-    server_port=args.port,
-    share=args.share,
-    inbrowser=args.inbrowser,
-)
+    block.launch(
+        server_name=args.server,
+        server_port=args.port,
+        share=args.share,
+        inbrowser=args.inbrowser,
+    )
+
+
+if __name__ == '__main__':
+    main()

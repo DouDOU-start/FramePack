@@ -1,11 +1,6 @@
-"""
-Unified entrypoint for the Gradio demo.
+from demo_gradio import main
 
-This thin wrapper imports `demo_gradio.py` and executes it.
-Keeping logic in `demo_gradio.py` preserves existing functionality
-while providing a stable `main.py` entry name.
-"""
-
-import demo_gradio  # noqa: F401  (side-effect: builds and launches the app)
+if __name__ == '__main__':
+    main()
 
 
