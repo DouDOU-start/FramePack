@@ -22,7 +22,7 @@ pip install -r requirements.txt
 
 ## 运行
 ```bash
-python demo_gradio.py --server 127.0.0.1 --inbrowser
+python main.py --server 127.0.0.1 --inbrowser
 # 可选：--share / --port 7860
 ```
 
