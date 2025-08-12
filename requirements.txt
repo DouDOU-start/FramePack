@@ -1,54 +1,39 @@
-# Core PyTorch and Deep Learning
-torch>=2.0.0
-torchvision>=0.15.0
-torchaudio>=2.0.0
-einops>=0.7.0
+##############################################
+# FramePack pinned requirements (Windows/Linux)
+# Python 3.10 / CUDA 12.6 (recommended)
+##############################################
 
-# Diffusers and Transformers
-diffusers>=0.30.0
-transformers>=4.40.0
-accelerate>=0.20.0
-safetensors>=0.4.0
+# Prefer installing PyTorch with the official index for CUDA 12.6.
+# If your environment already has PyTorch, you can comment out the next 4 lines.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
 
-# Hugging Face Hub
-huggingface-hub>=0.20.0
+accelerate==1.6.0
+diffusers==0.33.1
+transformers==4.46.2
+gradio==5.23.0
+sentencepiece==0.2.0
+pillow==11.1.0
+av==12.1.0
+numpy==1.26.2
+scipy==1.12.0
+requests==2.31.0
+torchsde==0.2.6
 
-# Image and Video Processing
-Pillow>=10.0.0
-opencv-python>=4.8.0
-numpy>=1.24.0
+einops
+opencv-contrib-python
+safetensors
 
-# Gradio Web Interface
-gradio>=4.0.0
+timm
+kornia
 
-# Progress and UI
-tqdm>=4.65.0
+# Optional accelerators (install only if your CUDA/toolchain matches)
+# xformers==0.0.27.post2
+# flash-attn==2.5.9
+# sageattention==1.0.6
 
-# Optional: Flash Attention (for better performance)
-# flash-attn>=2.0.0  # Uncomment if you have compatible GPU and want better performance
-
-# Optional: Sage Attention (alternative attention implementation)
-# sageattention>=1.0.0  # Uncomment if available and want to try alternative attention
-
-# System utilities
-psutil>=5.9.0
-
-# JSON and file handling (usually included with Python)
-# json - built-in
-# os - built-in
-# sys - built-in
-# argparse - built-in
-# tempfile - built-in
-# shutil - built-in
-# glob - built-in
-# datetime - built-in
-# math - built-in
-# threading - built-in
-# warnings - built-in
-# logging - built-in
-# traceback - built-in
-
-# Note: FFmpeg is required for video processing but needs to be installed separately
-# Windows: Download from https://ffmpeg.org/download.html
-# Linux: sudo apt install ffmpeg (Ubuntu/Debian) or sudo yum install ffmpeg (CentOS/RHEL)
-# macOS: brew install ffmpeg
+# Note: FFmpeg binary is required and must be installed separately
+# Windows: https://ffmpeg.org/download.html
+# Linux: sudo apt-get install -y ffmpeg

@@ -30,13 +30,32 @@ def encode_prompt_conds(prompt, text_encoder, text_encoder_2, tokenizer, tokeniz
     llama_attention_mask = llama_inputs.attention_mask.to(text_encoder.device)
     llama_attention_length = int(llama_attention_mask.sum())
 
+    # 强制模型配置开启 hidden_states/return_dict 以兼容不同 transformers 版本
+    try:
+        if hasattr(text_encoder, 'config'):
+            setattr(text_encoder.config, 'output_hidden_states', True)
+            setattr(text_encoder.config, 'return_dict', True)
+    except Exception:
+        pass
+
     llama_outputs = text_encoder(
         input_ids=llama_input_ids,
         attention_mask=llama_attention_mask,
         output_hidden_states=True,
+        return_dict=True,
     )
 
-    llama_vec = llama_outputs.hidden_states[-3][:, crop_start:llama_attention_length]
+    hidden_states = getattr(llama_outputs, 'hidden_states', None)
+    if hidden_states is None and isinstance(llama_outputs, (list, tuple)):
+        # 兼容 transformers 版本返回 tuple 的情况
+        for item in reversed(llama_outputs):
+            if isinstance(item, (list, tuple)) and len(item) > 0 and isinstance(item[0], torch.Tensor):
+                hidden_states = item
+                break
+    if hidden_states is None:
+        raise ValueError('text_encoder did not return hidden_states; please align transformers version with upstream')
+
+    llama_vec = hidden_states[-3][:, crop_start:llama_attention_length]
     # llama_vec_remaining = llama_outputs.hidden_states[-3][:, llama_attention_length:]
     llama_attention_mask = llama_attention_mask[:, crop_start:llama_attention_length]
 

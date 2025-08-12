@@ -103,15 +103,20 @@ pip install -r requirements.txt
 
 #### 3. 启动应用
 
-#### FramePack视频生成 (主要功能)
+##### 🎯 统一应用 (推荐)
 ```bash
-python scripts/framepack_app.py --server 127.0.0.1 --inbrowser
+# 使用启动脚本 (推荐)
+python start_unified.py --server 127.0.0.1 --inbrowser
+
+# 仅FramePack
+python start_unified.py --module framepack --server 127.0.0.1 --inbrowser [--auto-load]
+
+# 仅RMBG
+python start_unified.py --module rmbg --server 127.0.0.1 --inbrowser [--auto-load]
 ```
 
-#### RMBG背景处理
-```bash
-python scripts/rmbg_app.py --server 127.0.0.1 --inbrowser
-```
+##### 其他
+不再提供根目录外的额外入口脚本，统一使用 `start_unified.py`。
 
 #### 4. 命令行参数
 
@@ -121,10 +126,15 @@ python scripts/rmbg_app.py --server 127.0.0.1 --inbrowser
 - `--server ADDRESS`: 指定服务器地址 (默认: 127.0.0.1)
 - `--inbrowser`: 自动在浏览器中打开
 
+**统一应用额外参数:**
+- `--module {all, framepack, rmbg}`: 限定展示模块
+- `--auto-load`: 启动后自动加载对应模块模型
+
 **使用建议:**
 - Windows桌面: `--server 127.0.0.1 --inbrowser`
 - Linux服务器: `--server 0.0.0.0 --port 7860`
 - 公开分享: `--share`
+ 
 
 
 
@@ -142,6 +152,13 @@ python scripts/rmbg_app.py --server 127.0.0.1 --inbrowser
 - **背景替换**: 支持纯色背景替换
 - **视频处理**: 逐帧背景处理，支持透明视频输出
 - **批量处理**: 支持多文件批量处理
+
+### 🎯 统一应用平台
+- **延迟加载**: 启动时不加载模型，节省内存
+- **按需使用**: 根据需要加载对应模型
+- **智能切换**: 加载模型后自动切换到对应功能
+- **内存管理**: 可随时卸载不使用的模型
+- **统一界面**: 一个界面完成所有操作
 
 ### 🌟 透明背景支持
 本版本添加了完整的透明背景支持：
@@ -190,21 +207,32 @@ python scripts/rmbg_app.py --server 127.0.0.1 --inbrowser
 - **内存不足**: 关闭其他程序，或使用更小的模型参数
 - **FFmpeg未找到**: 安装FFmpeg并确保在系统PATH中
 
+## 📚 文档导航
+
+### 📄 核心文档
+- [**项目索引**](PROJECT_INDEX.md) - 完整项目文档和导航
+- [**API参考**](API_REFERENCE.md) - 详细API文档和使用示例
+- [**开发指南**](DEVELOPMENT_GUIDE.md) - 架构设计和开发规范
+- [**RMBG-2.0增强文档**](RMBG-2.0/README_ENHANCED.md) - 背景处理功能详细说明
+
 ## 🛠️ 开发和贡献
 
 ### 项目结构
 ```
 FramePack/
-├── scripts/                # 主要应用脚本
-│   ├── framepack_app.py    # FramePack视频生成主程序
-│   └── rmbg_app.py         # RMBG背景处理界面
-├── RMBG-2.0/              # 背景处理核心代码
-├── diffusers_helper/      # 扩散模型辅助工具
-├── hf_download/           # 模型文件存储目录
-├── outputs/               # 输出文件目录
-├── requirements.txt       # 依赖列表
-├── install.py            # 自动安装脚本
-└── README.md             # 项目说明
+├── scripts/                    # 主要应用脚本
+│   └── unified_app.py          # 统一应用平台（被 start_unified.py 启动）
+├── RMBG-2.0/                  # 背景处理核心代码
+├── diffusers_helper/          # 扩散模型辅助工具
+├── hf_download/               # 模型文件存储目录
+├── outputs/                   # 输出文件目录
+├── requirements.txt           # 依赖列表
+├── install.py                # 自动安装脚本
+├── start_unified.py           # 统一应用启动脚本（唯一入口）
+├── PROJECT_INDEX.md           # 项目文档索引
+├── API_REFERENCE.md           # API参考文档
+├── DEVELOPMENT_GUIDE.md       # 开发指南
+└── README.md                 # 项目说明
 ```
 
 ### 贡献指南

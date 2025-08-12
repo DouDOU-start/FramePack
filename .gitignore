@@ -1,3 +1,36 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/project files
+# Keep VS Code settings tracked; comment out next line if you want to ignore
+# .vscode/
+.idea/
+
+# Logs
+*.log
+
+# Project data/output
+outputs/
+hf_download/
+
+# Env
+.env
 # Python
 __pycache__/
 *.py[cod]

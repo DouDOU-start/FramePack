@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(python test_video_cropper.py:*)",
+      "Bash(python -c \"\nimport sys\nsys.path.append(''RMBG-2.0'')\ntry:\n    from video_cropper import VideoCropper\n    print(''✅ VideoCropper imported successfully'')\n    \n    cropper = VideoCropper()\n    print(''✅ VideoCropper initialized successfully'')\n    \n    # Test calculation functions\n    x, y, w, h = cropper.calculate_crop_region(1920, 1080, ''center'', 1280, 720)\n    print(f''✅ Center crop calculation: {x}, {y}, {w}, {h}'')\n    \n    x, y, w, h = cropper.calculate_crop_region(1920, 1080, ''aspect_ratio'', aspect_ratio=''16:9'')\n    print(f''✅ Aspect ratio crop calculation: {x}, {y}, {w}, {h}'')\n    \n    print(''✅ All basic tests passed!'')\n    \nexcept Exception as e:\n    print(f''❌ Error: {e}'')\n    sys.exit(1)\n\")",
+      "Bash(python:*)"
+    ],
+    "deny": []
+  },
+  "enabledMcpjsonServers": [
+    "sequential-thinking",
+    "context7"
+  ],
+  "enableAllProjectMcpServers": true
+}
