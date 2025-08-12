@@ -16,10 +16,7 @@
 conda create -n framepack python=3.10 -y
 conda activate framepack
 
-# 安装 PyTorch（CUDA 12.6）
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-
-# 安装依赖
+# 安装依赖（已包含 PyTorch 等必需组件）
 pip install -r requirements.txt
 ```
 
