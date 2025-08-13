@@ -873,7 +873,9 @@ with block:
                         type="pil",
                         interactive=True
                     )
-                    ff_cropped_video = gr.Video(label='裁剪结果', height=360, interactive=False)
+
+            with gr.Row():
+                ff_cropped_video = gr.Video(label='裁剪结果', height=360, interactive=False, width='100%')
 
             # Event handlers for the new cropper
             editor_inputs = [ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent]
