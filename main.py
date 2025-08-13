@@ -612,7 +612,7 @@ def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_hex, bg_transpa
 
     if not video_path:
         # No video, just return a blank canvas
-        return gr.update(value={"background": bg, "layers": []})
+        return gr.update(value={"background": bg, "layers": [], "composite": None})
 
     # A video is present, extract a frame
     cropper = RMBGVideoCropper()
@@ -620,10 +620,10 @@ def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_hex, bg_transpa
 
     if frame is None:
         # This can happen if the video is invalid
-        return gr.update(value={"background": bg, "layers": []})
+        return gr.update(value={"background": bg, "layers": [], "composite": None})
 
     # Return the background and the video frame as a new layer
-    return gr.update(value={"background": bg, "layers": [frame]})
+    return gr.update(value={"background": bg, "layers": [frame], "composite": None})
 
 def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_color_hex, bg_transparent, output_format, quality):
     """
