@@ -584,7 +584,7 @@ from PIL import ImageColor
 # FFmpeg Canvas Cropping Helpers
 # ============================
 
-def _create_bg_image(width, height, color_hex, transparent):
+def _create_bg_image(width, height, color_spec, transparent):
     """Creates a background image for the editor."""
     if transparent:
         # Create a checkerboard pattern for transparency visualization
@@ -598,17 +598,32 @@ def _create_bg_image(width, height, color_hex, transparent):
                     pixels[i, j] = (255, 255, 255, 255)
         return bg
     else:
-        color_rgb = ImageColor.getrgb(color_hex)
+        color_rgb = None
+        try:
+            # Handle rgba() strings from the color picker, which may contain floats
+            if color_spec.strip().lower().startswith('rgba'):
+                parts = color_spec.strip().lower().replace('rgba(', '').replace(')', '').split(',')
+                r = int(float(parts[0]))
+                g = int(float(parts[1]))
+                b = int(float(parts[2]))
+                color_rgb = (r, g, b)
+            else:
+                # This handles hex codes (#RRGGBB) and named colors (e.g., "white")
+                color_rgb = ImageColor.getrgb(color_spec)
+        except (ValueError, IndexError):
+            # Fallback to white if parsing fails for any reason
+            color_rgb = (255, 255, 255)
+
         return Image.new("RGB", (int(width), int(height)), color_rgb)
 
-def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_hex, bg_transparent):
+def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_spec, bg_transparent):
     """
     Callback to update the ImageEditor when video or canvas settings change.
     """
     video_path = _normalize_video_input(video_path)
 
     # Create a background image based on settings
-    bg = _create_bg_image(canvas_w, canvas_h, bg_color_hex, bg_transparent)
+    bg = _create_bg_image(canvas_w, canvas_h, bg_color_spec, bg_transparent)
 
     if not video_path:
         # No video, just return a blank canvas
@@ -628,7 +643,7 @@ def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_hex, bg_transpa
     # Return the background and the video frame as a new layer
     return gr.update(value={"background": bg, "layers": [frame_pil], "composite": None})
 
-def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_color_hex, bg_transparent, output_format, quality):
+def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_color_spec, bg_transparent, output_format, quality):
     """
     The main processing function for the new cropping UI.
     """
@@ -649,7 +664,7 @@ def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_co
     stem = os.path.splitext(os.path.basename(video_path))[0]
     out_path = os.path.join(out_dir, f"{stem}_canvas_crop.{output_format}")
 
-    bg_color = "transparent" if bg_transparent else bg_color_hex
+    bg_color = "transparent" if bg_transparent else bg_color_spec
 
     try:
         result = cropper.create_complex_crop_video(
