@@ -643,7 +643,7 @@ def _create_bg_image(width, height, color_spec, transparent):
 
 def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_spec, bg_transparent):
     """
-    Callback to update the ImageEditor when video or canvas settings change.
+    Callback to update the ImageEditor and video dimension inputs.
     """
     video_path = _normalize_video_input(video_path)
 
@@ -651,8 +651,8 @@ def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_spec, bg_transp
     bg = _create_bg_image(canvas_w, canvas_h, bg_color_spec, bg_transparent)
 
     if not video_path:
-        # No video, just return a blank canvas
-        return gr.update(value={"background": bg, "layers": [], "composite": None})
+        # No video, return a blank canvas and empty width/height
+        return gr.update(value={"background": bg, "layers": [], "composite": None}), None, None
 
     # A video is present, extract a frame
     cropper = RMBGVideoCropper()
@@ -660,15 +660,16 @@ def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_spec, bg_transp
 
     if frame is None:
         # This can happen if the video is invalid
-        return gr.update(value={"background": bg, "layers": [], "composite": None})
+        return gr.update(value={"background": bg, "layers": [], "composite": None}), None, None
 
     # Convert numpy frame to PIL Image before passing to editor
     frame_pil = Image.fromarray(frame)
+    video_w, video_h = frame_pil.size
 
-    # Return the background and the video frame as a new layer
-    return gr.update(value={"background": bg, "layers": [frame_pil], "composite": None})
+    # Return the editor update and the video dimensions
+    return gr.update(value={"background": bg, "layers": [frame_pil], "composite": None}), video_w, video_h
 
-def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_color_spec, bg_transparent, output_format, quality):
+def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_color_spec, bg_transparent, output_format, quality, num_video_w, num_video_h):
     """
     The main processing function for the new cropping UI.
     """
@@ -681,11 +682,14 @@ def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_co
     layer_image = editor_data['layers'][0]
     layer_info = layer_image.info
 
-    # Use .get() to provide default values if keys are missing (i.e., user didn't move/resize).
+    # Position is always from the visual editor.
     pos_x = layer_info.get('left', 0)
     pos_y = layer_info.get('top', 0)
-    video_scale_w = layer_info.get('width', layer_image.width)
-    video_scale_h = layer_info.get('height', layer_image.height)
+
+    # For video scale, prioritize the numerical inputs. Fall back to the visual editor's size.
+    # This allows the user to override the visual scaling for precise stretching.
+    video_scale_w = num_video_w if num_video_w and num_video_w > 0 else layer_info.get('width', layer_image.width)
+    video_scale_h = num_video_h if num_video_h and num_video_h > 0 else layer_info.get('height', layer_image.height)
 
     cropper = RMBGVideoCropper()
     out_dir = _ensure_outputs_dir('rmbg_crops')
@@ -889,7 +893,13 @@ with block:
                             ff_bg_color = gr.ColorPicker(label='背景颜色', value='#FFFFFF', interactive=True)
                             ff_bg_transparent = gr.Checkbox(label='透明背景', value=False, interactive=True)
 
-                    with gr.Accordion('4. 输出设置', open=True):
+                    with gr.Accordion('3. 视频分辨率设置 (可选)', open=True):
+                        gr.Markdown("在此处输入精确的视频宽高可覆盖编辑器中的视觉缩放，从而实现拉伸。")
+                        with gr.Row():
+                            ff_video_w = gr.Number(label="视频宽度", value=None, interactive=True, step=1)
+                            ff_video_h = gr.Number(label="视频高度", value=None, interactive=True, step=1)
+
+                    with gr.Accordion('5. 输出设置', open=True):
                         with gr.Row():
                             ff_out_fmt = gr.Dropdown(choices=['webm', 'mp4'], value='webm', label='输出格式')
                             ff_quality = gr.Dropdown(choices=['low', 'medium', 'high'], value='medium', label='画质')
@@ -897,7 +907,7 @@ with block:
                     ff_crop_btn = gr.Button('生成视频', variant='primary')
 
                 with gr.Column(scale=2):
-                    gr.Markdown("### 3. 编辑区域")
+                    gr.Markdown("### 4. 编辑区域")
                     ff_editor = gr.ImageEditor(
                         label="在下方画布中调整视频位置和尺寸",
                         height=600,
@@ -910,12 +920,13 @@ with block:
 
             # Event handlers for the new cropper
             editor_inputs = [ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent]
+            editor_outputs = [ff_editor, ff_video_w, ff_video_h]
 
             # When the tab is selected, initialize the editor
             tab_ffmpeg_crop.select(
                 fn=_update_crop_editor,
                 inputs=editor_inputs,
-                outputs=[ff_editor]
+                outputs=editor_outputs
             )
 
             # Any change in inputs should trigger an editor update
@@ -923,12 +934,12 @@ with block:
                 comp.change(
                     fn=_update_crop_editor,
                     inputs=editor_inputs,
-                    outputs=[ff_editor]
+                    outputs=editor_outputs
                 )
 
             ff_crop_btn.click(
                 fn=_ffmpeg_canvas_crop_video,
-                inputs=[ff_video_in, ff_editor, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent, ff_out_fmt, ff_quality],
+                inputs=[ff_video_in, ff_editor, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent, ff_out_fmt, ff_quality, ff_video_w, ff_video_h],
                 outputs=[ff_cropped_video],
             )
  
