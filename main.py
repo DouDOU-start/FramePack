@@ -818,28 +818,40 @@ with block:
             ff_tip = '✅ 已检测到 FFmpeg/FFprobe' if ff_ok else '⚠️ 未检测到 FFmpeg/FFprobe，请先安装并加入系统 PATH'
             gr.Markdown(ff_tip)
 
+            gr.Markdown("""
+            ### 使用指南
+            1.  **上传视频**: 点击下方“上传视频”区域，选择一个视频文件。
+            2.  **调整画布与背景**: 使用滑块和颜色选择器设置画布尺寸和背景。
+            3.  **编辑视频位置与尺寸**:
+                *   视频的第一帧会自动加载到右侧的编辑器中。
+                *   **移动**: 直接在编辑器中拖动视频。
+                *   **缩放**: 首先**点击**视频（会出现边框），然后拖动边角或边缘的控制点来调整大小。
+            4.  **生成视频**: 设置好输出格式和画质后，点击“生成视频”按钮。
+            """)
+
             with gr.Row(equal_height=True):
                 with gr.Column(scale=1):
-                    ff_video_in = gr.Video(label='上传视频', sources='upload', height=240)
-                    with gr.Accordion('画布和背景设置', open=True):
+                    ff_video_in = gr.Video(label='1. 上传视频', sources='upload', height=240)
+                    with gr.Accordion('2. 画布和背景设置', open=True):
                         with gr.Row():
-                            ff_canvas_w = gr.Number(label='画布宽度', value=1280, step=1, interactive=True)
-                            ff_canvas_h = gr.Number(label='画布高度', value=720, step=1, interactive=True)
+                            ff_canvas_w = gr.Slider(label='画布宽度', minimum=256, maximum=2048, value=1280, step=16, interactive=True)
+                            ff_canvas_h = gr.Slider(label='画布高度', minimum=256, maximum=2048, value=720, step=16, interactive=True)
                         with gr.Row():
                             ff_bg_color = gr.ColorPicker(label='背景颜色', value='#FFFFFF', interactive=True)
                             ff_bg_transparent = gr.Checkbox(label='透明背景', value=False, interactive=True)
 
-                    with gr.Accordion('输出设置', open=True):
+                    with gr.Accordion('4. 输出设置', open=True):
                         with gr.Row():
                             ff_out_fmt = gr.Dropdown(choices=['webm', 'mp4'], value='webm', label='输出格式')
                             ff_quality = gr.Dropdown(choices=['low', 'medium', 'high'], value='medium', label='画质')
 
-                    ff_crop_btn = gr.Button('开始裁剪视频', variant='primary')
+                    ff_crop_btn = gr.Button('生成视频', variant='primary')
 
                 with gr.Column(scale=2):
+                    gr.Markdown("### 3. 编辑区域")
                     ff_editor = gr.ImageEditor(
-                        label="视频位置和尺寸调整 (将视频帧从下方拖拽到画布上)",
-                        height=480,
+                        label="在下方画布中调整视频位置和尺寸",
+                        height=600,
                         type="pil",
                         interactive=True
                     )
