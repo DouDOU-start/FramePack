@@ -652,12 +652,12 @@ def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_co
         raise gr.Error("请上传视频并将视频帧拖到画布上进行编辑。")
 
     # Extract geometry from the ImageEditor's output
-    # The first layer is our video frame
-    layer_info = editor_data['layers'][0].info
-    pos_x = layer_info['left']
-    pos_y = layer_info['top']
-    video_scale_w = layer_info['width']
-    video_scale_h = layer_info['height']
+    # The first layer is our video frame, which is a dictionary
+    layer_data = editor_data['layers'][0]
+    pos_x = layer_data['left']
+    pos_y = layer_data['top']
+    video_scale_w = layer_data['width']
+    video_scale_h = layer_data['height']
 
     cropper = RMBGVideoCropper()
     out_dir = _ensure_outputs_dir('rmbg_crops')
