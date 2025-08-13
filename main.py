@@ -44,6 +44,7 @@ except Exception as _rmbg_import_err:
 
 
 def main():
+    global high_vram, text_encoder, text_encoder_2, tokenizer, tokenizer_2, vae, feature_extractor, image_encoder, transformer, stream, outputs_folder
     parser = argparse.ArgumentParser()
     parser.add_argument('--share', action='store_true')
     parser.add_argument("--server", type=str, default='0.0.0.0')
@@ -113,6 +114,13 @@ def main():
 
     outputs_folder = './outputs/'
     os.makedirs(outputs_folder, exist_ok=True)
+
+    block.launch(
+        server_name=args.server,
+        server_port=args.port,
+        share=args.share,
+        inbrowser=args.inbrowser,
+    )
 
 
 @torch.no_grad()
@@ -622,9 +630,9 @@ quick_prompts = [
 quick_prompts = [[x] for x in quick_prompts]
 
 
-    css = make_progress_bar_css()
-    block = gr.Blocks(css=css).queue()
-    with block:
+css = make_progress_bar_css()
+block = gr.Blocks(css=css).queue()
+with block:
     gr.Markdown('## FramePack 工具集')
     with gr.Tabs():
         # ============= Tab 1: FramePack 视频生成 =============
@@ -635,30 +643,22 @@ quick_prompts = [[x] for x in quick_prompts]
                     prompt = gr.Textbox(label="提示词", value='')
                     example_quick_prompts = gr.Dataset(samples=quick_prompts, label='快速提示', samples_per_page=1000, components=[prompt])
                     example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
-
                     with gr.Row():
                         start_button = gr.Button(value="开始生成")
                         end_button = gr.Button(value="结束生成", interactive=False)
-
                     with gr.Group():
                         use_teacache = gr.Checkbox(label='使用 TeaCache', value=True, info='更快，但可能稍微影响手部细节')
-
                         with gr.Accordion('高级设置', open=False):
                             n_prompt = gr.Textbox(label="反向提示词", value="", visible=False)
                             seed = gr.Number(label="随机种子", value=31337, precision=0)
-
                             total_second_length = gr.Slider(label="视频总时长（秒）", minimum=1, maximum=120, value=5, step=0.1)
                             latent_window_size = gr.Slider(label="潜变量窗口（固定）", minimum=1, maximum=33, value=9, step=1, visible=False)
                             steps = gr.Slider(label="步数", minimum=1, maximum=100, value=25, step=1, info='不建议修改')
-
                             cfg = gr.Slider(label="CFG（固定）", minimum=1.0, maximum=32.0, value=1.0, step=0.01, visible=False)
                             gs = gr.Slider(label="蒸馏 CFG", minimum=1.0, maximum=32.0, value=10.0, step=0.01, info='不建议修改')
                             rs = gr.Slider(label="CFG Re-Scale（固定）", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)
-
                             gpu_memory_preservation = gr.Slider(label="GPU 预留显存（GB）（越大越慢）", minimum=6, maximum=128, value=6, step=0.1, info="OOM 则调大；数值越大速度越慢")
-
                             mp4_crf = gr.Slider(label="MP4 压缩（0=无压缩；值越低质量越好）", minimum=0, maximum=100, value=16, step=1)
-
                 with gr.Column():
                     with gr.Group():
                         result_video = gr.Video(label="生成视频", autoplay=True, show_share_button=False, height=512, loop=True)
@@ -667,13 +667,10 @@ quick_prompts = [[x] for x in quick_prompts]
                         gr.Markdown('提示：反向采样会先生成结尾动作，起始动作稍后呈现。')
                         progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
                         progress_bar = gr.HTML('', elem_classes='no-generating-animation')
-
-            gr.Markdown('——')
-
+            # gr.Markdown('——')
             ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf]
             start_button.click(fn=process, inputs=ips, outputs=[result_video, preview_image, progress_desc, progress_bar, start_button, end_button])
             end_button.click(fn=end_process)
-
         # ============= Tab 2: RMBG-2.0 =============
         with gr.TabItem('RMBG-2.0'):
             gr.Markdown('### 背景处理工具')
@@ -683,20 +680,15 @@ quick_prompts = [[x] for x in quick_prompts]
                     btn_load = gr.Button('加载模型', variant='primary', scale=0)
                     btn_unload = gr.Button('卸载模型', scale=0)
                 rmbg_status = gr.Markdown('')
-
             def _on_rmbg_tab_enter(device):
                 return rmbg_load(device)
-
             def _on_rmbg_tab_leave():
                 return rmbg_unload()
-
             def _on_rmbg_device_change(device):
-                # 卸载后按新设备重载
                 unload_msg = rmbg_unload()
                 load_msg = rmbg_load(device)
                 sep = '\n\n' if unload_msg and load_msg else ''
                 return f"{unload_msg}{sep}{load_msg}"
-
             with gr.Tabs():
                 # 子页：图片抠图 / 背景替换
                 with gr.TabItem('图片抠图 / 背景替换'):
@@ -715,21 +707,17 @@ quick_prompts = [[x] for x in quick_prompts]
                                 btn_clear_img = gr.Button('清空')
                         with gr.Column(scale=1):
                             rmbg_image_output = gr.Image(type='filepath', label='结果图片', height=360)
-
                     def _set_color(c):
                         return c or ''
                     color_quick.change(fn=_set_color, inputs=[color_quick], outputs=[rmbg_bg_color])
-
                     def _clear_img():
                         return gr.update(value=None)
                     btn_clear_img.click(fn=_clear_img, outputs=[rmbg_image_output])
-
                     rmbg_image_btn.click(
                         fn=rmbg_process_image,
                         inputs=[rmbg_image_input, rmbg_bg_color, rmbg_device, rmbg_bg_img],
                         outputs=[rmbg_image_output],
                     )
-
                 # 子页：视频抠图 / 背景替换
                 with gr.TabItem('视频抠图 / 背景替换'):
                     with gr.Row():
@@ -753,43 +741,33 @@ quick_prompts = [[x] for x in quick_prompts]
                         with gr.Column(scale=1):
                             rmbg_video_status = gr.Markdown('')
                             rmbg_video_output = gr.Video(label='处理后视频', autoplay=False, height=360)
-
                     color_quick_v.change(fn=_set_color, inputs=[color_quick_v], outputs=[rmbg_bg_color_v])
-
                     def _clear_vid():
                         return gr.update(value=None), gr.update(value='')
                     btn_clear_vid.click(fn=_clear_vid, outputs=[rmbg_video_output, rmbg_video_status])
-
                     def _rmbg_video_wrapper(video_path, model_id, bg_color, w, h, fps, device):
                         try:
                             out, status = rmbg_process_video(video_path, model_id, bg_color, w, h, fps, device)
                             return out, status
                         except Exception as e:
                             return None, f"❌ 错误：{e}"
-
                     def _rmbg_video_wrapper_with_bg_img(video_path, bg_color_v, w, h, fps, device, bg_img):
                         try:
                             out, status = rmbg_process_video(video_path, bg_color_v, w, h, fps, device, bg_img)
                             return out, status
                         except Exception as e:
                             return None, f"❌ 错误：{e}"
-
                     rmbg_video_btn.click(
                         fn=_rmbg_video_wrapper_with_bg_img,
                         inputs=[rmbg_video_input, rmbg_bg_color_v, rmbg_res_w, rmbg_res_h, rmbg_fps, rmbg_device, rmbg_bg_img_v],
                         outputs=[rmbg_video_output, rmbg_video_status],
                     )
-
             # 绑定手动加载/卸载按钮
             btn_load.click(fn=rmbg_load, inputs=[rmbg_device], outputs=[rmbg_status])
             btn_unload.click(fn=lambda: rmbg_unload(), outputs=[rmbg_status])
-
             # 自动进入/离开 Tab 的加载/卸载（通过交互触发，避免空转）
             # 当用户更改设备或点击任一子页控件时触发一次加载
             rmbg_device.change(fn=_on_rmbg_device_change, inputs=[rmbg_device], outputs=[rmbg_status])
-
-                # 子页：占位（可扩展更多 RMBG 功能）
-
         # ============= Tab 3: 视频裁剪（FFmpeg） =============
         with gr.TabItem('视频裁剪（FFmpeg）'):
             with gr.Row():
@@ -816,7 +794,6 @@ quick_prompts = [[x] for x in quick_prompts]
                 with gr.Column():
                     ff_preview_img = gr.Image(label='裁剪预览帧')
                     ff_cropped_video = gr.Video(label='裁剪结果', height=360)
-
             ff_preview_btn.click(
                 fn=ffmpeg_crop_preview,
                 inputs=[ff_video_in, ff_crop_type, ff_crop_tw, ff_crop_th, ff_crop_x, ff_crop_y, ff_aspect, ff_preview_time],
@@ -827,12 +804,7 @@ quick_prompts = [[x] for x in quick_prompts]
                 inputs=[ff_video_in, ff_crop_type, ff_crop_tw, ff_crop_th, ff_crop_x, ff_crop_y, ff_aspect, ff_out_fmt, ff_quality],
                 outputs=[ff_cropped_video],
             )
-    block.launch(
-        server_name=args.server,
-        server_port=args.port,
-        share=args.share,
-        inbrowser=args.inbrowser,
-    )
+ 
 
 
 if __name__ == '__main__':
