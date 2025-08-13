@@ -622,8 +622,11 @@ def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_hex, bg_transpa
         # This can happen if the video is invalid
         return gr.update(value={"background": bg, "layers": [], "composite": None})
 
+    # Convert numpy frame to PIL Image before passing to editor
+    frame_pil = Image.fromarray(frame)
+
     # Return the background and the video frame as a new layer
-    return gr.update(value={"background": bg, "layers": [frame], "composite": None})
+    return gr.update(value={"background": bg, "layers": [frame_pil], "composite": None})
 
 def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_color_hex, bg_transparent, output_format, quality):
     """
