@@ -468,25 +468,27 @@ class VideoCropper:
              video_scale_w = min(video_scale_w, canvas_w)
              video_scale_h = min(video_scale_h, canvas_h)
 
-        # FFmpeg filter graph
-        # Use format=yuva420p for webm transparency
+        # Define the background color source. Expects 'transparent' or a hex code.
+        if bg_color == "transparent":
+            color_source = f"color=c=black@0.0:s={canvas_w}x{canvas_h}"
+        else:
+            # bg_color should be a sanitized hex string
+            color_source = f"color=c={bg_color}:s={canvas_w}x{canvas_h}"
+
+        # Add duration to the color source, which is required by some ffmpeg versions
+        if video_info.get('duration'):
+             color_source += f":d={video_info['duration']}"
+
+        # Define the pixel format for the final output
         pix_fmt = "yuva420p" if output_format.lower() == 'webm' and bg_color == "transparent" else "yuv420p"
 
-        if bg_color == "transparent":
-            color_filter = f"color=c=black@0.0:s={canvas_w}x{canvas_h},format={pix_fmt}[bg]"
-        else:
-            color_filter = f"color=c={bg_color}:s={canvas_w}x{canvas_h},format={pix_fmt}[bg]"
-
-        scale_filter = f"[0:v]scale={video_scale_w}:{video_scale_h}[fg]"
-        overlay_filter = f"[bg][fg]overlay=x={pos_x}:y={pos_y}"
-
-        # Add duration to color filter for some versions of ffmpeg
-        if video_info.get('duration'):
-            duration_str = f":d={video_info['duration']}"
-            color_filter = color_filter.replace(f",format={pix_fmt}", f"{duration_str},format={pix_fmt}")
-
-
-        vf_command = f"{color_filter};{scale_filter};{overlay_filter}"
+        # Build the filter graph with correct chaining syntax
+        vf_command = (
+            f"{color_source}[canvas];"  # Create the canvas
+            f"[canvas]format={pix_fmt}[bg];"  # Set the pixel format for the background
+            f"[0:v]scale={video_scale_w}:{video_scale_h}[fg];"  # Scale the foreground video
+            f"[bg][fg]overlay=x={pos_x}:y={pos_y}"  # Overlay the foreground onto the background
+        )
 
         cmd = [ffmpeg_path, "-y", "-i", input_path, "-vf", vf_command, "-map", "0:a?"]
 

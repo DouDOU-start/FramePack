@@ -584,6 +584,31 @@ from PIL import ImageColor
 # FFmpeg Canvas Cropping Helpers
 # ============================
 
+def _convert_color_to_ffmpeg_hex(color_spec: str) -> str:
+    """Converts a color specifier from Gradio to an FFmpeg-compatible hex string."""
+    if not color_spec:
+        return '#FFFFFF'  # Default to white
+
+    color_spec = color_spec.strip().lower()
+
+    if color_spec.startswith('rgba'):
+        try:
+            parts = color_spec.replace('rgba(', '').replace(')', '').split(',')
+            r = int(float(parts[0]))
+            g = int(float(parts[1]))
+            b = int(float(parts[2]))
+            # Ensure values are within 0-255 range
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except (ValueError, IndexError):
+            return '#FFFFFF'  # Fallback
+
+    # It might already be a hex string or a named color that ffmpeg understands.
+    # We will return it as is.
+    return color_spec
+
 def _create_bg_image(width, height, color_spec, transparent):
     """Creates a background image for the editor."""
     if transparent:
@@ -667,7 +692,10 @@ def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_co
     stem = os.path.splitext(os.path.basename(video_path))[0]
     out_path = os.path.join(out_dir, f"{stem}_canvas_crop.{output_format}")
 
-    bg_color = "transparent" if bg_transparent else bg_color_spec
+    if bg_transparent:
+        bg_color_for_ffmpeg = "transparent"
+    else:
+        bg_color_for_ffmpeg = _convert_color_to_ffmpeg_hex(bg_color_spec)
 
     try:
         result = cropper.create_complex_crop_video(
@@ -680,7 +708,7 @@ def _ffmpeg_canvas_crop_video(video_path, editor_data, canvas_w, canvas_h, bg_co
             canvas_h=int(canvas_h),
             pos_x=int(pos_x),
             pos_y=int(pos_y),
-            bg_color=bg_color,
+            bg_color=bg_color_for_ffmpeg,
             quality=quality,
         )
         return result
