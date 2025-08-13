@@ -384,3 +384,148 @@ class VideoCropper:
         except Exception as e:
             print(f"Error getting crop preview: {e}")
             return None
+
+    def get_frame(self, video_path: str, frame_time: float = 1.0) -> Optional[np.ndarray]:
+        """
+        Extract a single frame from a video.
+
+        Args:
+            video_path: Path to input video
+            frame_time: Time position to extract frame (seconds)
+
+        Returns:
+            Frame as numpy array (RGB) or None if failed
+        """
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return None
+
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+            target_frame = min(int(frame_time * fps), frame_count - 1)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+
+            ret, frame = cap.read()
+            cap.release()
+
+            if not ret:
+                return None
+
+            # Convert BGR (OpenCV default) to RGB for Gradio
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            return None
+
+    def create_complex_crop_video(self,
+                               input_path: str,
+                               output_path: str,
+                               output_format: str = "webm",
+                               video_scale_w: int = 640,
+                               video_scale_h: int = 480,
+                               canvas_w: int = 640,
+                               canvas_h: int = 480,
+                               pos_x: int = 0,
+                               pos_y: int = 0,
+                               bg_color: str = "transparent",
+                               quality: str = "medium",
+                               progress_callback: Optional[Callable] = None) -> str:
+        """
+        Creates a video by scaling the input video and overlaying it on a canvas.
+
+        Args:
+            input_path: Path to input video
+            output_path: Path for output video
+            output_format: Output format (webm, mp4)
+            video_scale_w: Width to scale the video to
+            video_scale_h: Height to scale the video to
+            canvas_w: Width of the background canvas
+            canvas_h: Height of the background canvas
+            pos_x: X position of the video on the canvas
+            pos_y: Y position of the video on the canvas
+            bg_color: Background color ('transparent', 'black', '#RRGGBB', etc.)
+            quality: Quality setting (low, medium, high)
+            progress_callback: Optional progress callback function
+
+        Returns:
+            Path to output video file
+        """
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            raise Exception("FFmpeg not found. Please install FFmpeg to process videos.")
+
+        video_info = self.get_video_info(input_path)
+        if not video_info:
+            raise Exception("Could not get video information")
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        if video_scale_w > canvas_w or video_scale_h > canvas_h:
+             # video resolution is constrained by canvas resolution
+             video_scale_w = min(video_scale_w, canvas_w)
+             video_scale_h = min(video_scale_h, canvas_h)
+
+        # FFmpeg filter graph
+        # Use format=yuva420p for webm transparency
+        pix_fmt = "yuva420p" if output_format.lower() == 'webm' and bg_color == "transparent" else "yuv420p"
+
+        if bg_color == "transparent":
+            color_filter = f"color=c=black@0.0:s={canvas_w}x{canvas_h},format={pix_fmt}[bg]"
+        else:
+            color_filter = f"color=c={bg_color}:s={canvas_w}x{canvas_h},format={pix_fmt}[bg]"
+
+        scale_filter = f"[0:v]scale={video_scale_w}:{video_scale_h}[fg]"
+        overlay_filter = f"[bg][fg]overlay=x={pos_x}:y={pos_y}"
+
+        # Add duration to color filter for some versions of ffmpeg
+        if video_info.get('duration'):
+            duration_str = f":d={video_info['duration']}"
+            color_filter = color_filter.replace(f",format={pix_fmt}", f"{duration_str},format={pix_fmt}")
+
+
+        vf_command = f"{color_filter};{scale_filter};{overlay_filter}"
+
+        cmd = [ffmpeg_path, "-y", "-i", input_path, "-vf", vf_command, "-map", "0:a?"]
+
+        # Codec and quality settings
+        if output_format.lower() == "webm":
+            cmd.extend(["-c:v", "libvpx-vp9"])
+            if quality == "high":
+                cmd.extend(["-crf", "15", "-b:v", "0"])
+            elif quality == "low":
+                cmd.extend(["-crf", "35", "-b:v", "1M"])
+            else: # medium
+                cmd.extend(["-crf", "25", "-b:v", "0"])
+            cmd.extend(["-c:a", "libopus"])
+        elif output_format.lower() == "mp4":
+            cmd.extend(["-c:v", "libx264"])
+            if quality == "high":
+                cmd.extend(["-crf", "18"])
+            elif quality == "low":
+                cmd.extend(["-crf", "28"])
+            else: # medium
+                cmd.extend(["-crf", "23"])
+            cmd.extend(["-c:a", "aac"])
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
+
+        cmd.append(output_path)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                check=True,
+            )
+            if not os.path.exists(output_path):
+                raise Exception(f"Output file was not created. FFmpeg stderr: {result.stderr}")
+            return output_path
+        except subprocess.CalledProcessError as e:
+            error_msg = f"FFmpeg error: {e.stderr}" if e.stderr else str(e)
+            raise Exception(error_msg)
