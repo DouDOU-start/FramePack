@@ -609,65 +609,6 @@ def _convert_color_to_ffmpeg_hex(color_spec: str) -> str:
     # We will return it as is.
     return color_spec
 
-def _create_bg_image(width, height, color_spec, transparent):
-    """Creates a background image for the editor."""
-    if transparent:
-        # Create a checkerboard pattern for transparency visualization
-        bg = Image.new('RGBA', (int(width), int(height)), (0, 0, 0, 0))
-        pixels = bg.load()
-        for i in range(int(width)):
-            for j in range(int(height)):
-                if (i // 16 + j // 16) % 2 == 0:
-                    pixels[i, j] = (230, 230, 230, 255)
-                else:
-                    pixels[i, j] = (255, 255, 255, 255)
-        return bg
-    else:
-        color_rgb = None
-        try:
-            # Handle rgba() strings from the color picker, which may contain floats
-            if color_spec.strip().lower().startswith('rgba'):
-                parts = color_spec.strip().lower().replace('rgba(', '').replace(')', '').split(',')
-                r = int(float(parts[0]))
-                g = int(float(parts[1]))
-                b = int(float(parts[2]))
-                color_rgb = (r, g, b)
-            else:
-                # This handles hex codes (#RRGGBB) and named colors (e.g., "white")
-                color_rgb = ImageColor.getrgb(color_spec)
-        except (ValueError, IndexError):
-            # Fallback to white if parsing fails for any reason
-            color_rgb = (255, 255, 255)
-
-        return Image.new("RGB", (int(width), int(height)), color_rgb)
-
-def _update_crop_editor(video_path, canvas_w, canvas_h, bg_color_spec, bg_transparent):
-    """
-    Callback to update the ImageEditor and video dimension inputs.
-    """
-    video_path = _normalize_video_input(video_path)
-
-    # Create a background image based on settings
-    bg = _create_bg_image(canvas_w, canvas_h, bg_color_spec, bg_transparent)
-
-    if not video_path:
-        # No video, return a blank canvas and empty width/height
-        return gr.update(value={"background": bg, "layers": [], "composite": None}), None, None
-
-    # A video is present, extract a frame
-    cropper = RMBGVideoCropper()
-    frame = cropper.get_frame(video_path)
-
-    if frame is None:
-        # This can happen if the video is invalid
-        return gr.update(value={"background": bg, "layers": [], "composite": None}), None, None
-
-    # Convert numpy frame to PIL Image before passing to editor
-    frame_pil = Image.fromarray(frame)
-    video_w, video_h = frame_pil.size
-
-    # Return the editor update and the video dimensions
-    return gr.update(value={"background": bg, "layers": [frame_pil], "composite": None}), video_w, video_h
 
 def _get_video_w_h(video_path):
     video_path = _normalize_video_input(video_path)
@@ -926,9 +867,7 @@ with block:
                             ff_out_fmt = gr.Dropdown(choices=['webm', 'mp4'], value='webm', label='输出格式')
                             ff_quality = gr.Dropdown(choices=['low', 'medium', 'high'], value='medium', label='画质')
 
-                    with gr.Row():
-                        ff_preview_btn = gr.Button("生成预览")
-                        ff_process_btn = gr.Button("生成视频", variant='primary')
+                    ff_process_btn = gr.Button("生成视频", variant='primary')
 
                 with gr.Column(scale=1):
                     gr.Markdown("#### 2. 预览和结果")
@@ -938,60 +877,77 @@ with block:
             ff_aspect_ratio_state = gr.State(value=1.0)
 
             # Event Handlers
-            def _populate_video_dims_on_upload(video_path):
-                video_path = _normalize_video_input(video_path)
-                if not video_path:
-                    return None, None, 1.0
+            def _on_video_upload(video_path, canvas_w, canvas_h, bg_color, bg_transparent, pos_x, pos_y, sizing_mode):
+                # Part 1: Populate video dimensions
+                video_path_norm = _normalize_video_input(video_path)
+                if not video_path_norm:
+                    # Return updates to clear the fields and the preview
+                    return None, None, 1.0, None
+
                 cropper = RMBGVideoCropper()
-                info = cropper.get_video_info(video_path)
+                info = cropper.get_video_info(video_path_norm)
+
+                video_w, video_h, aspect_ratio = None, None, 1.0
                 if info and info.get('height', 0) > 0:
-                    w, h = info.get('width'), info.get('height')
-                    return w, h, w / h
-                return None, None, 1.0
+                    video_w, video_h = info.get('width'), info.get('height')
+                    aspect_ratio = video_w / video_h
+                else:
+                    # Invalid video, clear everything
+                    return None, None, 1.0, None
+
+                # Part 2: Generate preview
+                # Note: we use the newly extracted video_w and video_h here
+                preview_image = cropper.generate_preview_frame(
+                    input_path=video_path_norm,
+                    canvas_w=int(canvas_w),
+                    canvas_h=int(canvas_h),
+                    bg_color=bg_color,
+                    bg_transparent=bg_transparent,
+                    video_scale_w=int(video_w),
+                    video_scale_h=int(video_h),
+                    pos_x=int(pos_x),
+                    pos_y=int(pos_y),
+                    sizing_mode=sizing_mode
+                )
+
+                if preview_image is None:
+                    # Don't raise an error, just return no image
+                    preview_image = None
+
+                return video_w, video_h, aspect_ratio, preview_image
 
             ff_video_in.change(
-                fn=_populate_video_dims_on_upload,
-                inputs=[ff_video_in],
-                outputs=[ff_video_w, ff_video_h, ff_aspect_ratio_state],
-                queue=False
+                fn=_on_video_upload,
+                inputs=[
+                    ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent,
+                    ff_pos_x, ff_pos_y, ff_sizing_mode
+                ],
+                outputs=[ff_video_w, ff_video_h, ff_aspect_ratio_state, ff_preview_img],
+                queue=True
             )
 
-            def _on_video_width_change(width_str, aspect_ratio, sizing_mode):
-                if "拉伸" in sizing_mode:
-                    return gr.update() # No change in stretch mode
-                try:
-                    # gr.Number can sometimes pass a string
-                    width = float(width_str)
-                    if width > 0 and aspect_ratio > 0:
-                        new_height = round(width / aspect_ratio)
-                        return gr.update(value=new_height)
-                except (ValueError, TypeError):
-                    pass
-                return gr.update()
-
-            def _on_video_height_change(height_str, aspect_ratio, sizing_mode):
-                if "拉伸" in sizing_mode:
-                    return gr.update() # No change in stretch mode
-                try:
-                    height = float(height_str)
-                    if height > 0 and aspect_ratio > 0:
-                        new_width = round(height * aspect_ratio)
-                        return gr.update(value=new_width)
-                except (ValueError, TypeError):
-                    pass
-                return gr.update()
-
-            preview_inputs = [
-                ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color,
-                ff_bg_transparent, ff_video_w, ff_video_h, ff_pos_x, ff_pos_y,
-                ff_sizing_mode
+            # --- Auto-preview Handlers ---
+            # Define a list of controls that trigger a preview refresh
+            preview_controls = [
+                ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent,
+                ff_sizing_mode, ff_pos_x, ff_pos_y
             ]
-            ff_preview_btn.click(
-                fn=_generate_preview_wrapper,
-                inputs=preview_inputs,
-                outputs=[ff_preview_img]
-            )
+            # Define the full set of inputs needed for the preview function
+            preview_inputs = [
+                ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent,
+                ff_video_w, ff_video_h, ff_pos_x, ff_pos_y, ff_sizing_mode
+            ]
 
+            # Attach the simple preview handler to all controls in the list
+            for control in preview_controls:
+                control.change(
+                    fn=_generate_preview_wrapper,
+                    inputs=preview_inputs,
+                    outputs=[ff_preview_img],
+                    queue=True
+                )
+
+            # --- Process Button Handler ---
             process_inputs = [
                 ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent,
                 ff_video_w, ff_video_h, ff_pos_x, ff_pos_y, ff_out_fmt, ff_quality,
@@ -1003,18 +959,51 @@ with block:
                 outputs=[ff_video_out]
             )
 
+            # --- Combined Handlers for Width/Height (Aspect Ratio + Preview) ---
+            def _on_video_width_change(width_str, height_str, aspect_ratio, sizing_mode, video_path, canvas_w, canvas_h, bg_color, bg_transparent, pos_x, pos_y):
+                new_height_update = gr.update()
+                height_for_preview, width_val = None, None
+                try: height_for_preview = float(height_str)
+                except (ValueError, TypeError): pass
+                try: width_val = float(width_str)
+                except (ValueError, TypeError): pass
+
+                if "拉伸" not in sizing_mode and width_val is not None and width_val > 0 and aspect_ratio > 0:
+                    new_height_val = round(width_val / aspect_ratio)
+                    new_height_update = gr.update(value=new_height_val)
+                    height_for_preview = new_height_val
+
+                preview_img = _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, width_val, height_for_preview, pos_x, pos_y, sizing_mode)
+                return new_height_update, preview_img
+
+            def _on_video_height_change(height_str, width_str, aspect_ratio, sizing_mode, video_path, canvas_w, canvas_h, bg_color, bg_transparent, pos_x, pos_y):
+                new_width_update = gr.update()
+                width_for_preview, height_val = None, None
+                try: width_for_preview = float(width_str)
+                except (ValueError, TypeError): pass
+                try: height_val = float(height_str)
+                except (ValueError, TypeError): pass
+
+                if "拉伸" not in sizing_mode and height_val is not None and height_val > 0 and aspect_ratio > 0:
+                    new_width_val = round(height_val * aspect_ratio)
+                    new_width_update = gr.update(value=new_width_val)
+                    width_for_preview = new_width_val
+
+                preview_img = _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, width_for_preview, height_val, pos_x, pos_y, sizing_mode)
+                return new_width_update, preview_img
+
             ff_video_w.change(
                 fn=_on_video_width_change,
-                inputs=[ff_video_w, ff_aspect_ratio_state, ff_sizing_mode],
-                outputs=[ff_video_h],
-                queue=False
+                inputs=[ff_video_w, ff_video_h, ff_aspect_ratio_state, ff_sizing_mode, ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent, ff_pos_x, ff_pos_y],
+                outputs=[ff_video_h, ff_preview_img],
+                queue=True
             )
 
             ff_video_h.change(
                 fn=_on_video_height_change,
-                inputs=[ff_video_h, ff_aspect_ratio_state, ff_sizing_mode],
-                outputs=[ff_video_w],
-                queue=False
+                inputs=[ff_video_h, ff_video_w, ff_aspect_ratio_state, ff_sizing_mode, ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent, ff_pos_x, ff_pos_y],
+                outputs=[ff_video_w, ff_preview_img],
+                queue=True
             )
  
 
