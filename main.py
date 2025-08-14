@@ -925,7 +925,7 @@ with block:
 
                 with gr.Column(scale=1):
                     gr.Markdown("#### 2. 预览和结果")
-                    ff_preview_img = gr.Image(label="效果预览", height=400)
+                    ff_preview_img = gr.Image(label="效果预览")
                     ff_video_out = gr.Video(label="结果视频", height=400)
 
             # Event Handlers
