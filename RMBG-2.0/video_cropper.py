@@ -420,6 +420,71 @@ class VideoCropper:
             print(f"Error getting frame: {e}")
             return None
 
+    def generate_preview_frame(self,
+                               input_path: str,
+                               canvas_w: int,
+                               canvas_h: int,
+                               video_scale_w: Optional[int] = None,
+                               video_scale_h: Optional[int] = None,
+                               pos_x: int = 0,
+                               pos_y: int = 0,
+                               bg_color: str = "#FFFFFF",
+                               bg_transparent: bool = False) -> Optional[np.ndarray]:
+        """
+        Generates a single preview frame by composing a video frame onto a canvas.
+        Uses Pillow and OpenCV for fast image manipulation.
+        """
+        from PIL import Image, ImageDraw, ImageColor
+
+        # Get a frame from the video (e.g., at 0.5s to avoid potential black frames at the start)
+        frame_np = self.get_frame(input_path, frame_time=0.5)
+        if frame_np is None:
+            return None
+
+        frame_pil = Image.fromarray(frame_np)
+
+        # Use provided video dimensions or fallback to original
+        if not video_scale_w or video_scale_w <= 0:
+            video_scale_w = frame_pil.width
+        if not video_scale_h or video_scale_h <= 0:
+            video_scale_h = frame_pil.height
+
+        # Resize the frame
+        resized_frame = frame_pil.resize((video_scale_w, video_scale_h), Image.Resampling.LANCZOS)
+
+        # Create the background canvas
+        canvas_mode = "RGBA"
+        if bg_transparent:
+            canvas = Image.new(canvas_mode, (canvas_w, canvas_h), (0, 0, 0, 0))
+            # Draw checkerboard for visualization
+            draw = ImageDraw.Draw(canvas)
+            tile_size = 16
+            for i in range(0, canvas_w, tile_size):
+                for j in range(0, canvas_h, tile_size):
+                    if (i // tile_size + j // tile_size) % 2 == 0:
+                        draw.rectangle([i, j, i + tile_size, j + tile_size], fill=(230, 230, 230, 255))
+                    else:
+                        draw.rectangle([i, j, i + tile_size, j + tile_size], fill=(255, 255, 255, 255))
+        else:
+            try:
+                # This needs the same robust parsing as in main.py
+                if bg_color.strip().lower().startswith('rgba'):
+                    parts = bg_color.strip().lower().replace('rgba(', '').replace(')', '').split(',')
+                    r, g, b = int(float(parts[0])), int(float(parts[1])), int(float(parts[2]))
+                    color_rgb = (r, g, b)
+                else:
+                    color_rgb = ImageColor.getrgb(bg_color)
+            except Exception:
+                color_rgb = (255, 255, 255) # Fallback to white
+            canvas = Image.new(canvas_mode, (canvas_w, canvas_h), color_rgb)
+
+        # Paste the resized frame onto the canvas
+        # Pillow's paste handles RGBA pasting correctly
+        canvas.paste(resized_frame, (pos_x, pos_y), resized_frame if resized_frame.mode == 'RGBA' else None)
+
+        # Convert back to numpy array for Gradio
+        return np.array(canvas.convert("RGB"))
+
     def create_complex_crop_video(self,
                                input_path: str,
                                output_path: str,
