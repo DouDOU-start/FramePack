@@ -429,12 +429,13 @@ class VideoCropper:
                                pos_x: int = 0,
                                pos_y: int = 0,
                                bg_color: str = "#FFFFFF",
-                               bg_transparent: bool = False) -> Optional[np.ndarray]:
+                               bg_transparent: bool = False,
+                               sizing_mode: str = "裁剪 (Crop)") -> Optional[np.ndarray]:
         """
         Generates a single preview frame by composing a video frame onto a canvas.
         Uses Pillow and OpenCV for fast image manipulation.
         """
-        from PIL import Image, ImageDraw, ImageColor
+        from PIL import Image, ImageDraw, ImageColor, ImageOps
 
         # Get a frame from the video (e.g., at 0.5s to avoid potential black frames at the start)
         frame_np = self.get_frame(input_path, frame_time=0.5)
@@ -449,8 +450,21 @@ class VideoCropper:
         if not video_scale_h or video_scale_h <= 0:
             video_scale_h = frame_pil.height
 
-        # Resize the frame
-        resized_frame = frame_pil.resize((video_scale_w, video_scale_h), Image.Resampling.LANCZOS)
+        # Process the frame based on the sizing mode
+        if "拉伸" in sizing_mode: # Stretch
+            processed_frame = frame_pil.resize((video_scale_w, video_scale_h), Image.Resampling.LANCZOS)
+        elif "缩放" in sizing_mode: # Scale (Contain/Fit)
+            # Create a new transparent image with the target dimensions
+            processed_frame = Image.new("RGBA", (video_scale_w, video_scale_h), (0, 0, 0, 0))
+            # Create a thumbnail of the original frame that fits within the target dimensions
+            thumbnail_frame = frame_pil.copy()
+            thumbnail_frame.thumbnail((video_scale_w, video_scale_h), Image.Resampling.LANCZOS)
+            # Paste the thumbnail into the center of the transparent frame
+            paste_x = (video_scale_w - thumbnail_frame.width) // 2
+            paste_y = (video_scale_h - thumbnail_frame.height) // 2
+            processed_frame.paste(thumbnail_frame, (paste_x, paste_y))
+        else: # Default to Crop (裁剪/Cover)
+            processed_frame = ImageOps.fit(frame_pil, (video_scale_w, video_scale_h), Image.Resampling.LANCZOS)
 
         # Create the background canvas
         canvas_mode = "RGBA"
@@ -478,9 +492,9 @@ class VideoCropper:
                 color_rgb = (255, 255, 255) # Fallback to white
             canvas = Image.new(canvas_mode, (canvas_w, canvas_h), color_rgb)
 
-        # Paste the resized frame onto the canvas
+        # Paste the processed frame onto the canvas
         # Pillow's paste handles RGBA pasting correctly
-        canvas.paste(resized_frame, (pos_x, pos_y), resized_frame if resized_frame.mode == 'RGBA' else None)
+        canvas.paste(processed_frame, (pos_x, pos_y), processed_frame if processed_frame.mode == 'RGBA' else None)
 
         # Convert back to numpy array for Gradio
         return np.array(canvas.convert("RGB"))
@@ -496,6 +510,7 @@ class VideoCropper:
                                pos_x: int = 0,
                                pos_y: int = 0,
                                bg_color: str = "transparent",
+                               sizing_mode: str = "裁剪 (Crop)",
                                quality: str = "medium",
                                progress_callback: Optional[Callable] = None) -> str:
         """
@@ -547,12 +562,27 @@ class VideoCropper:
         # Define the pixel format for the final output
         pix_fmt = "yuva420p" if output_format.lower() == 'webm' and bg_color == "transparent" else "yuv420p"
 
-        # Build the filter graph with correct chaining syntax
+        # 1. Define the video scaling filter based on mode
+        if "拉伸" in sizing_mode: # Stretch
+            scale_filter = f"scale={video_scale_w}:{video_scale_h}"
+        elif "缩放" in sizing_mode: # Scale (Contain/Fit)
+            scale_filter = f"scale={video_scale_w}:{video_scale_h}:force_original_aspect_ratio=decrease"
+        else: # Default to Crop (裁剪/Cover)
+            scale_filter = f"scale={video_scale_w}:{video_scale_h}:force_original_aspect_ratio=increase,crop={video_scale_w}:{video_scale_h}"
+
+        # 2. Scale the video and pad it to the target video box size.
+        # This creates a video stream of size video_scale_w x video_scale_h.
+        # The padding is transparent, so the main canvas will show through for "Scale" mode.
+        video_processing_chain = (
+            f"{scale_filter},"
+            f"pad={video_scale_w}:{video_scale_h}:-1:-1:color=black@0.0"
+        )
+
+        # 3. Create the main canvas and overlay the processed video stream onto it.
         vf_command = (
-            f"{color_source}[canvas];"  # Create the canvas
-            f"[canvas]format={pix_fmt}[bg];"  # Set the pixel format for the background
-            f"[0:v]scale={video_scale_w}:{video_scale_h}[fg];"  # Scale the foreground video
-            f"[bg][fg]overlay=x={pos_x}:y={pos_y}"  # Overlay the foreground onto the background
+            f"{color_source}[bg];"
+            f"[0:v]{video_processing_chain}[fg];"
+            f"[bg][fg]overlay=x={pos_x}:y={pos_y}"
         )
 
         cmd = [ffmpeg_path, "-y", "-i", input_path, "-vf", vf_command, "-map", "0:a?"]

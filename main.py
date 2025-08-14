@@ -679,7 +679,7 @@ def _get_video_w_h(video_path):
         return info.get('width'), info.get('height')
     return None, None
 
-def _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, video_w, video_h, pos_x, pos_y):
+def _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, video_w, video_h, pos_x, pos_y, sizing_mode):
     video_path = _normalize_video_input(video_path)
     if not video_path:
         raise gr.Error("请先上传视频！")
@@ -695,13 +695,14 @@ def _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_trans
         video_scale_h=int(video_h) if video_h and video_h > 0 else None,
         pos_x=int(pos_x),
         pos_y=int(pos_y),
+        sizing_mode=sizing_mode
     )
     if preview_image is None:
         raise gr.Error("生成预览失败，请检查视频文件是否有效。")
 
     return preview_image
 
-def _process_video_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, video_w, video_h, pos_x, pos_y, output_format, quality):
+def _process_video_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, video_w, video_h, pos_x, pos_y, output_format, quality, sizing_mode):
     video_path = _normalize_video_input(video_path)
     if not video_path:
         raise gr.Error("请先上传视频！")
@@ -737,6 +738,7 @@ def _process_video_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transpar
         pos_y=int(pos_y),
         bg_color=bg_color_for_ffmpeg,
         quality=quality,
+        sizing_mode=sizing_mode
     )
     return result
 
@@ -906,6 +908,11 @@ with block:
                             ff_bg_transparent = gr.Checkbox(label='透明背景', value=False, interactive=True)
 
                     with gr.Accordion("视频设置", open=True):
+                        ff_sizing_mode = gr.Radio(
+                            choices=["裁剪 (Crop)", "拉伸 (Stretch)", "缩放 (Scale)"],
+                            value="裁剪 (Crop)",
+                            label="视频缩放模式"
+                        )
                         gr.Markdown("在此处输入精确的视频宽高可实现拉伸效果。")
                         with gr.Row():
                             ff_video_w = gr.Number(label="视频宽度", value=None, interactive=True, step=1)
@@ -948,7 +955,8 @@ with block:
 
             preview_inputs = [
                 ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color,
-                ff_bg_transparent, ff_video_w, ff_video_h, ff_pos_x, ff_pos_y
+                ff_bg_transparent, ff_video_w, ff_video_h, ff_pos_x, ff_pos_y,
+                ff_sizing_mode
             ]
             ff_preview_btn.click(
                 fn=_generate_preview_wrapper,
@@ -958,7 +966,8 @@ with block:
 
             process_inputs = [
                 ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color, ff_bg_transparent,
-                ff_video_w, ff_video_h, ff_pos_x, ff_pos_y, ff_out_fmt, ff_quality
+                ff_video_w, ff_video_h, ff_pos_x, ff_pos_y, ff_out_fmt, ff_quality,
+                ff_sizing_mode
             ]
             ff_process_btn.click(
                 fn=_process_video_wrapper,
