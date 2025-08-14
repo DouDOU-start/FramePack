@@ -935,23 +935,51 @@ with block:
                     ff_preview_img = gr.Image(label="效果预览")
                     ff_video_out = gr.Video(label="结果视频", height=400)
 
+            ff_aspect_ratio_state = gr.State(value=1.0)
+
             # Event Handlers
             def _populate_video_dims_on_upload(video_path):
                 video_path = _normalize_video_input(video_path)
                 if not video_path:
-                    return None, None
+                    return None, None, 1.0
                 cropper = RMBGVideoCropper()
                 info = cropper.get_video_info(video_path)
-                if info:
-                    return info.get('width'), info.get('height')
-                return None, None
+                if info and info.get('height', 0) > 0:
+                    w, h = info.get('width'), info.get('height')
+                    return w, h, w / h
+                return None, None, 1.0
 
             ff_video_in.change(
                 fn=_populate_video_dims_on_upload,
                 inputs=[ff_video_in],
-                outputs=[ff_video_w, ff_video_h],
+                outputs=[ff_video_w, ff_video_h, ff_aspect_ratio_state],
                 queue=False
             )
+
+            def _on_video_width_change(width_str, aspect_ratio, sizing_mode):
+                if "拉伸" in sizing_mode:
+                    return gr.update() # No change in stretch mode
+                try:
+                    # gr.Number can sometimes pass a string
+                    width = float(width_str)
+                    if width > 0 and aspect_ratio > 0:
+                        new_height = round(width / aspect_ratio)
+                        return gr.update(value=new_height)
+                except (ValueError, TypeError):
+                    pass
+                return gr.update()
+
+            def _on_video_height_change(height_str, aspect_ratio, sizing_mode):
+                if "拉伸" in sizing_mode:
+                    return gr.update() # No change in stretch mode
+                try:
+                    height = float(height_str)
+                    if height > 0 and aspect_ratio > 0:
+                        new_width = round(height * aspect_ratio)
+                        return gr.update(value=new_width)
+                except (ValueError, TypeError):
+                    pass
+                return gr.update()
 
             preview_inputs = [
                 ff_video_in, ff_canvas_w, ff_canvas_h, ff_bg_color,
@@ -973,6 +1001,20 @@ with block:
                 fn=_process_video_wrapper,
                 inputs=process_inputs,
                 outputs=[ff_video_out]
+            )
+
+            ff_video_w.change(
+                fn=_on_video_width_change,
+                inputs=[ff_video_w, ff_aspect_ratio_state, ff_sizing_mode],
+                outputs=[ff_video_h],
+                queue=False
+            )
+
+            ff_video_h.change(
+                fn=_on_video_height_change,
+                inputs=[ff_video_h, ff_aspect_ratio_state, ff_sizing_mode],
+                outputs=[ff_video_w],
+                queue=False
             )
  
 
