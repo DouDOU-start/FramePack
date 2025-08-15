@@ -573,9 +573,11 @@ class VideoCropper:
         # 2. Scale the video and pad it to the target video box size.
         # This creates a video stream of size video_scale_w x video_scale_h.
         # The padding is transparent, so the main canvas will show through for "Scale" mode.
+        # We add a +2 over-pad and then crop back to size to avoid 1px rounding errors in ffmpeg's scale filter.
         video_processing_chain = (
             f"{scale_filter},"
-            f"pad={video_scale_w}:{video_scale_h}:-1:-1:color=black@0.0"
+            f"pad={video_scale_w}+2:{video_scale_h}+2:-1:-1:color=black@0.0,"
+            f"crop={video_scale_w}:{video_scale_h}"
         )
 
         # 3. Create the main canvas and overlay the processed video stream onto it.
