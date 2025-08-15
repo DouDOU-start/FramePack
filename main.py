@@ -973,8 +973,8 @@ with block:
                 if "拉伸" not in sizing_mode and width_val is not None and width_val > 0 and aspect_ratio > 0:
                     new_height_val = round(width_val / aspect_ratio)
                     height_for_preview = new_height_val
-                    # Only update if the value is different to prevent infinite loops
-                    if new_height_val != current_height:
+                    # Only update if the value is significantly different (tolerance > 1) to prevent loops
+                    if current_height is None or abs(new_height_val - current_height) > 1:
                         new_height_update = gr.update(value=new_height_val)
 
                 preview_img = _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, width_val, height_for_preview, pos_x, pos_y, sizing_mode)
@@ -993,8 +993,8 @@ with block:
                 if "拉伸" not in sizing_mode and height_val is not None and height_val > 0 and aspect_ratio > 0:
                     new_width_val = round(height_val * aspect_ratio)
                     width_for_preview = new_width_val
-                    # Only update if the value is different to prevent infinite loops
-                    if new_width_val != current_width:
+                    # Only update if the value is significantly different (tolerance > 1) to prevent loops
+                    if current_width is None or abs(new_width_val - current_width) > 1:
                         new_width_update = gr.update(value=new_width_val)
 
                 preview_img = _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, width_for_preview, height_val, pos_x, pos_y, sizing_mode)
