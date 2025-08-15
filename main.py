@@ -962,32 +962,40 @@ with block:
             # --- Combined Handlers for Width/Height (Aspect Ratio + Preview) ---
             def _on_video_width_change(width_str, height_str, aspect_ratio, sizing_mode, video_path, canvas_w, canvas_h, bg_color, bg_transparent, pos_x, pos_y):
                 new_height_update = gr.update()
-                height_for_preview, width_val = None, None
-                try: height_for_preview = float(height_str)
+                height_for_preview, width_val, current_height = None, None, None
+                try:
+                    current_height = float(height_str)
+                    height_for_preview = current_height
                 except (ValueError, TypeError): pass
                 try: width_val = float(width_str)
                 except (ValueError, TypeError): pass
 
                 if "拉伸" not in sizing_mode and width_val is not None and width_val > 0 and aspect_ratio > 0:
                     new_height_val = round(width_val / aspect_ratio)
-                    new_height_update = gr.update(value=new_height_val)
                     height_for_preview = new_height_val
+                    # Only update if the value is different to prevent infinite loops
+                    if new_height_val != current_height:
+                        new_height_update = gr.update(value=new_height_val)
 
                 preview_img = _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, width_val, height_for_preview, pos_x, pos_y, sizing_mode)
                 return new_height_update, preview_img
 
             def _on_video_height_change(height_str, width_str, aspect_ratio, sizing_mode, video_path, canvas_w, canvas_h, bg_color, bg_transparent, pos_x, pos_y):
                 new_width_update = gr.update()
-                width_for_preview, height_val = None, None
-                try: width_for_preview = float(width_str)
+                width_for_preview, height_val, current_width = None, None, None
+                try:
+                    current_width = float(width_str)
+                    width_for_preview = current_width
                 except (ValueError, TypeError): pass
                 try: height_val = float(height_str)
                 except (ValueError, TypeError): pass
 
                 if "拉伸" not in sizing_mode and height_val is not None and height_val > 0 and aspect_ratio > 0:
                     new_width_val = round(height_val * aspect_ratio)
-                    new_width_update = gr.update(value=new_width_val)
                     width_for_preview = new_width_val
+                    # Only update if the value is different to prevent infinite loops
+                    if new_width_val != current_width:
+                        new_width_update = gr.update(value=new_width_val)
 
                 preview_img = _generate_preview_wrapper(video_path, canvas_w, canvas_h, bg_color, bg_transparent, width_for_preview, height_val, pos_x, pos_y, sizing_mode)
                 return new_width_update, preview_img
