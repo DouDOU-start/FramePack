@@ -614,17 +614,42 @@ class VideoCropper:
         cmd.append(output_path)
 
         try:
-            result = subprocess.run(
+            # Use Popen to handle long-running processes and avoid deadlocks from full pipe buffers.
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
+                universal_newlines=True,
                 encoding='utf-8',
                 errors='ignore',
-                check=True,
             )
+
+            # We must read from stderr to prevent the buffer from filling up and causing a deadlock.
+            stderr_output = ""
+            for line in process.stderr:
+                stderr_output += line
+                if progress_callback:
+                    # Basic progress parsing, can be improved
+                    if 'frame=' in line:
+                        try:
+                            frame_part = line.split('frame=')[1].split()[0]
+                            # This part needs total duration to be useful, skipping for now
+                        except:
+                            pass
+
+            process.wait()
+
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, cmd, stderr=stderr_output)
+
             if not os.path.exists(output_path):
-                raise Exception(f"Output file was not created. FFmpeg stderr: {result.stderr}")
+                raise Exception(f"Output file was not created. FFmpeg stderr: {stderr_output}")
+
             return output_path
+
         except subprocess.CalledProcessError as e:
             error_msg = f"FFmpeg error: {e.stderr}" if e.stderr else str(e)
             raise Exception(error_msg)
+        except Exception as e:
+            raise Exception(f"Video processing failed: {str(e)}")
